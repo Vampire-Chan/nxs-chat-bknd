@@ -154,4 +154,57 @@ router.post('/:id/channels', auth, async (req, res) => {
   }
 });
 
+const Invite = require('../models/Invite');
+const crypto = require('crypto');
+
+// GENERATE INVITE
+router.post('/:id/invites', auth, async (req, res) => {
+  try {
+    const realm = await Realm.findById(req.params.id);
+    if (!realm) return res.status(404).json({ message: "Realm not found" });
+
+    const code = crypto.randomBytes(4).toString('hex');
+    const newInvite = new Invite({
+      code,
+      realm: realm._id,
+      inviter: req.user.id,
+      maxUses: req.body.maxUses || 0,
+      expiresAt: req.body.expiresAt ? new Date(req.body.expiresAt) : null
+    });
+
+    await newInvite.save();
+    res.json({ code: newInvite.code });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// JOIN VIA INVITE
+router.post('/join/:code', auth, async (req, res) => {
+  try {
+    const invite = await Invite.findOne({ code: req.params.code });
+    if (!invite) return res.status(404).json({ message: "Invite code invalid or expired." });
+
+    if (invite.expiresAt && invite.expiresAt < new Date()) {
+      return res.status(400).json({ message: "Invite link has expired." });
+    }
+    if (invite.maxUses > 0 && invite.uses >= invite.maxUses) {
+      return res.status(400).json({ message: "Invite use limit reached." });
+    }
+
+    const realm = await Realm.findById(invite.realm);
+    if (!realm.members.includes(req.user.id)) {
+      realm.members.push(req.user.id);
+      await realm.save();
+      
+      const user = await User.findById(req.user.id);
+      user.realms.push(realm._id);
+      await user.save();
+    }
+
+    invite.uses += 1;
+    await invite.save();
+
+    res.json(realm);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;
