@@ -59,10 +59,17 @@ router.delete('/:id', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET ALL
+// GET ALL (Global Matrix - Public Only)
 router.get('/all', auth, async (req, res) => {
   try {
-    const posts = await Post.find().populate('author', 'username avatar').sort({ createdAt: -1 });
+    // 1. Find all private users
+    const privateUsers = await require('../models/User').find({ isPrivate: true }).distinct('_id');
+    
+    // 2. Fetch posts where author is NOT in private list
+    const posts = await Post.find({ author: { $nin: privateUsers } })
+      .populate('author', 'username avatar')
+      .sort({ createdAt: -1 });
+      
     res.json(posts);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

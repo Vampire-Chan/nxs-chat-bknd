@@ -1,11 +1,14 @@
 const mongoose = require('mongoose');
 
 const ChannelSchema = new mongoose.Schema({
-  realm: { type: mongoose.Schema.Types.ObjectId, ref: 'Realm' }, // Optional for DMs
-  name: { type: String }, // Optional for DMs (auto-generated)
-  type: { type: String, enum: ['text', 'feed', 'dm', 'reels'], default: 'text' },
-  members: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // For DMs
-  status: { type: String, enum: ['active', 'pending'], default: 'active' }, // Added
+  name: { type: String, required: true },
+  type: { type: String, enum: ['text', 'voice', 'feed', 'reels', 'announcement', 'dm', 'group_dm'], default: 'text' },
+  realm: { type: mongoose.Schema.Types.ObjectId, ref: 'Realm' },
+  
+  // Group DM Support
+  members: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  maxMembers: { type: Number, default: 50 }, // Limited to 50 as requested
+  
   createdAt: { type: Date, default: Date.now }
 });
 

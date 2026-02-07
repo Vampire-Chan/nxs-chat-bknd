@@ -158,6 +158,15 @@ const Invite = require('../models/Invite');
 const crypto = require('crypto');
 
 // GENERATE INVITE
+// LOOKUP BY VANITY
+router.get('/handle/:vanity', auth, async (req, res) => {
+  try {
+    const realm = await Realm.findOne({ vanityHandle: req.params.vanity });
+    if (!realm) return res.status(404).json({ message: "Realm handle not found." });
+    res.json(realm);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.post('/:id/invites', auth, async (req, res) => {
   try {
     const realm = await Realm.findById(req.params.id);

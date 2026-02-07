@@ -2,20 +2,31 @@ const router = require('express').Router();
 const User = require('../models/User');
 const Post = require('../models/Post');
 const Realm = require('../models/Realm');
+const Transaction = require('../models/Transaction');
 const auth = require('../middleware/auth');
 
-// Middleware to check if user is Architect
+// 1. ARCHITECT & ADMIN (Full Access)
 const architectOnly = async (req, res, next) => {
   const user = await User.findById(req.user.id);
-  if (user && user.isAdmin) {
-    next();
-  } else {
-    res.status(403).json({ message: "ACCESS_DENIED: Identity is not an Architect." });
-  }
+  // Creator (Developer badge) or Admin flag
+  const hasFullRights = user && (user.isAdmin || user.badges.some(b => b.type === 'developer' || b.type === 'architect'));
+  if (hasFullRights) return next();
+  res.status(403).json({ message: "ACCESS_DENIED: Full administrative clearance required." });
 };
 
-// GET GLOBAL STATS
-router.get('/stats', auth, architectOnly, async (req, res) => {
+// 2. MODERATOR + ABOVE (Observation & Purge)
+const oversightAccess = async (req, res, next) => {
+  const user = await User.findById(req.user.id);
+  const hasAccess = user && (
+    user.isAdmin || 
+    user.badges.some(b => b.type === 'developer' || b.type === 'architect' || b.type === 'moderator')
+  );
+  if (hasAccess) return next();
+  res.status(403).json({ message: "ACCESS_DENIED: Oversight clearance required." });
+};
+
+// STATS (Oversight Access)
+router.get('/stats', auth, oversightAccess, async (req, res) => {
   try {
     const counts = {
       users: await User.countDocuments(),
@@ -26,25 +37,32 @@ router.get('/stats', auth, architectOnly, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// LIST ALL BROADCASTS (For Moderation)
-router.get('/broadcasts', auth, architectOnly, async (req, res) => {
+// BROADCASTS (Oversight Access)
+router.get('/broadcasts', auth, oversightAccess, async (req, res) => {
   try {
-    const posts = await Post.find()
-      .populate('author', 'username avatar')
-      .sort({ createdAt: -1 });
+    const posts = await Post.find().populate('author', 'username avatar').sort({ createdAt: -1 });
     res.json(posts);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// SEVER ANY BROADCAST
-router.delete('/broadcasts/:id', auth, architectOnly, async (req, res) => {
+// DELETE BROADCAST (Oversight Access - Mods can delete)
+router.delete('/broadcasts/:id', auth, oversightAccess, async (req, res) => {
   try {
     await Post.findByIdAndDelete(req.params.id);
-    res.json({ message: "Broadcast purged by Architect oversight." });
+    res.json({ message: "Broadcast purged by oversight." });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// LIST ALL IDENTITIES
+// EDIT BROADCAST (Architect Only - Mods cannot edit neural data)
+router.put('/broadcasts/:id', auth, architectOnly, async (req, res) => {
+  try {
+    const { caption } = req.body;
+    await Post.findByIdAndUpdate(req.params.id, { $set: { caption } });
+    res.json({ message: "Broadcast neural data modified by Architect." });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// IDENTITIES (Architect Only)
 router.get('/identities', auth, architectOnly, async (req, res) => {
   try {
     const users = await User.find().select('-totpSecret');
@@ -52,12 +70,31 @@ router.get('/identities', auth, architectOnly, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// SEVER IDENTITY NODE (Ban)
+// SEVER IDENTITY (Architect Only)
 router.delete('/identities/:id', auth, architectOnly, async (req, res) => {
   try {
-    // In a real app, we'd flag them as banned. For now, total deletion.
     await User.findByIdAndDelete(req.params.id);
-    res.json({ message: "Identity node permanently severed from Nexus." });
+    res.json({ message: "Identity node permanently erased." });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// FINANCE (Architect Only)
+router.get('/finance/pending', auth, architectOnly, async (req, res) => {
+  try {
+    const txs = await Transaction.find({ status: 'pending' }).populate('user', 'username avatar');
+    res.json(txs);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/finance/approve/:id', auth, architectOnly, async (req, res) => {
+  try {
+    const tx = await Transaction.findById(req.params.id);
+    tx.status = 'approved'; await tx.save();
+    const user = await User.findById(tx.user);
+    user.tier = 'elite';
+    if (!user.badges.some(b => b.type === 'premium')) user.badges.push({ type: 'premium', label: 'Nexus Elite' });
+    await user.save();
+    res.json({ message: "Payment verified." });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

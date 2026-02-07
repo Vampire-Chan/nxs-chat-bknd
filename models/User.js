@@ -8,24 +8,36 @@ const UserSchema = new mongoose.Schema({
   isVerified: { type: Boolean, default: false },
   isSetupComplete: { type: Boolean, default: false },
   
-  // Optional Profile Fields
   email: { type: String, default: "" }, 
   avatar: { type: String, default: "" },
   banner: { type: String, default: "" },
   bio: { type: String, default: "" },
+  
+  // IDENTITY BADGES
+  badges: [{ 
+    type: { type: String, enum: ['developer', 'tester', 'early_access', 'beta', 'premium', 'architect', 'moderator'] },
+    label: String
+  }],
+
   realms: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Realm' }],
   followers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   following: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   status: { type: String, enum: ['online', 'idle', 'dnd', 'offline'], default: 'online' },
   isPrivate: { type: Boolean, default: false },
+  
+  inboundRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  outboundRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  
+  vanityHandle: { type: String, unique: true, sparse: true },
+  tier: { type: String, enum: ['standard', 'elite'], default: 'standard' },
   customStatus: { type: String, default: "" },
   
-  // SECURITY MATRIX
   recoveryKeys: [{
     code: { type: String },
     isUsed: { type: Boolean, default: false }
   }],
-  isAdmin: { type: Boolean, default: false }, // Added
+  isAdmin: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now }
 });
 

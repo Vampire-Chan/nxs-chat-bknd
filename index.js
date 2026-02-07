@@ -31,7 +31,8 @@ app.use('/api/posts', require('./routes/posts'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/dms', require('./routes/dms'));
 app.use('/api/search', require('./routes/search'));
-app.use('/api/admin', require('./routes/admin')); // Added // Added
+app.use('/api/admin', require('./routes/admin'));
+app.use('/api/payments', require('./routes/payments')); // Added // Added // Added
 
 // Database
 mongoose.connect(process.env.MONGO_URI)
