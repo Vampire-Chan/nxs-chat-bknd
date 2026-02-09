@@ -1,99 +1,110 @@
 const router = require('express').Router();
+const Channel = require('../models/Channel');
 const Message = require('../models/Message');
 const Post = require('../models/Post');
-const Channel = require('../models/Channel');
-const Realm = require('../models/Realm');
 const auth = require('../middleware/auth');
 
-// Middleware to check if user has access to channel
-const checkChannelAccess = async (req, res, next) => {
-  try {
-    const channel = await Channel.findById(req.params.id);
-    if (!channel) return res.status(404).json({ message: "Channel node lost" });
-
-    if (channel.type === 'dm') {
-      // For DMs, user must be in the members list
-      if (!channel.members.includes(req.user.id)) {
-        return res.status(403).json({ message: "Access denied to private link" });
-      }
-    } else {
-      // For Realm channels, user must be a member of the parent Realm
-      const realm = await Realm.findById(channel.realm);
-      if (!realm || !realm.members.includes(req.user.id)) {
-        return res.status(403).json({ message: "Identity not authorized for this realm" });
-      }
-    }
-    next();
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
-const multer = require('multer');
-
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: 'nexus-chat-media',
-    resource_type: 'auto',
-    allowed_formats: ['jpg', 'png', 'jpeg', 'gif', 'mp4', 'mov', 'webm']
-  }
-});
-const upload = multer({ storage });
-
-// POST Message with Media
-router.post('/:id/messages', auth, upload.single('file'), async (req, res) => {
+// 1. EDIT MESSAGE (Specific path first)
+router.put('/messages/:id', auth, async (req, res) => {
   try {
     const { content } = req.body;
-    let mediaUrl = null;
-    let mediaType = null;
-
-    if (req.file) {
-      mediaUrl = req.file.path;
-      mediaType = req.file.mimetype.startsWith('video') ? 'video' : 'image';
+    const msg = await Message.findById(req.params.id);
+    if (!msg) return res.status(404).json({ message: "Transmission lost." });
+    
+    if (msg.sender.toString() !== req.user.id) {
+      return res.status(403).json({ message: "Unauthorized node modification." });
     }
 
-    const newMessage = new Message({
-      channel: req.params.id,
-      sender: req.user.id,
-      content,
-      mediaUrl,
-      mediaType
-    });
+    msg.content = content;
+    await msg.save();
 
-    await newMessage.save();
-    await newMessage.populate('sender', 'username avatar');
-    res.json(newMessage);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+    const populated = await Message.findById(msg._id).populate('sender', 'username avatar badges tier isAdmin');
+
+    // Broadcast edit
+    const io = req.app.get('socketio');
+    if (io) {
+      io.to(msg.channel.toString()).emit('message_updated', populated);
+    }
+
+    res.json(populated);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET Messages for a Channel
-router.get('/:id/messages', auth, checkChannelAccess, async (req, res) => {
+// 2. DELETE MESSAGE
+router.delete('/messages/:id', auth, async (req, res) => {
   try {
-    const messages = await Message.find({ channel: req.params.id })
-      .populate('sender', 'username avatar')
+    const msg = await Message.findById(req.params.id);
+    if (!msg) return res.status(404).json({ message: "Message already purged." });
+    
+    if (msg.sender.toString() !== req.user.id) {
+      return res.status(403).json({ message: "Unauthorized severance." });
+    }
+
+    const channelId = msg.channel.toString();
+    await Message.findByIdAndDelete(req.params.id);
+    
+    // Broadcast deletion if needed (Optional: add message_deleted event)
+    res.json({ message: "Transmission erased from matrix." });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 3. MARK AS READ
+router.post('/:id/read', auth, async (req, res) => {
+  try {
+    const channelId = req.params.id;
+    const userId = req.user.id;
+    const channel = await Channel.findById(channelId);
+    if (!channel) return res.status(404).json({ message: "Node lost" });
+    if (!channel.lastSeen) channel.lastSeen = {};
+    channel.lastSeen[userId] = new Date();
+    channel.markModified('lastSeen');
+    await channel.save();
+    res.json({ message: "Channel synced as read." });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 4. MARK AS UNREAD
+router.post('/:id/unread', auth, async (req, res) => {
+  try {
+    const channelId = req.params.id;
+    const userId = req.user.id;
+    const channel = await Channel.findById(channelId);
+    if (!channel) return res.status(404).json({ message: "Node lost" });
+    if (!channel.lastSeen) channel.lastSeen = {};
+    channel.lastSeen[userId] = new Date(0);
+    channel.markModified('lastSeen');
+    await channel.save();
+    res.json({ message: "Channel marked as unread." });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 5. GET MESSAGES (Auto-marks as read)
+router.get('/:id/messages', auth, async (req, res) => {
+  try {
+    const channelId = req.params.id;
+    const userId = req.user.id;
+    const channel = await Channel.findById(channelId);
+    if (channel) {
+      if (!channel.lastSeen) channel.lastSeen = {};
+      channel.lastSeen[userId] = new Date();
+      channel.markModified('lastSeen');
+      await channel.save();
+    }
+    const messages = await Message.find({ channel: channelId })
+      .populate('sender', 'username avatar badges tier isAdmin')
       .sort({ timestamp: 1 });
     res.json(messages);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET Posts for a Channel
-router.get('/:id/posts', auth, checkChannelAccess, async (req, res) => {
+// 6. GET POSTS (For Feed/Reels Channels)
+router.get('/:id/posts', auth, async (req, res) => {
   try {
     const posts = await Post.find({ channel: req.params.id })
       .populate('author', 'username avatar')
-      .populate('comments.user', 'username avatar')
       .sort({ createdAt: -1 });
     res.json(posts);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 module.exports = router;

@@ -78,6 +78,21 @@ router.delete('/identities/:id', auth, architectOnly, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GRANT AUTHORITY (Architect Only)
+router.post('/identities/:id/authority', auth, architectOnly, async (req, res) => {
+  try {
+    const { badges, isAdmin } = req.body;
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: "Identity not found." });
+
+    if (badges !== undefined) user.badges = badges;
+    if (isAdmin !== undefined) user.isAdmin = isAdmin;
+
+    await user.save();
+    res.json({ message: "Identity authority recalibrated.", user });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // FINANCE (Architect Only)
 router.get('/finance/pending', auth, architectOnly, async (req, res) => {
   try {
@@ -89,12 +104,16 @@ router.get('/finance/pending', auth, architectOnly, async (req, res) => {
 router.post('/finance/approve/:id', auth, architectOnly, async (req, res) => {
   try {
     const tx = await Transaction.findById(req.params.id);
+    if (!tx) return res.status(404).json({ message: "Transaction record not found." });
+    
     tx.status = 'approved'; await tx.save();
     const user = await User.findById(tx.user);
-    user.tier = 'elite';
-    if (!user.badges.some(b => b.type === 'premium')) user.badges.push({ type: 'premium', label: 'Nexus Elite' });
-    await user.save();
-    res.json({ message: "Payment verified." });
+    if (user) {
+      user.tier = 'elite';
+      if (!user.badges.some(b => b.type === 'premium')) user.badges.push({ type: 'premium', label: 'Nexus Elite' });
+      await user.save();
+    }
+    res.json({ message: "Payment verified and identity node upgraded." });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

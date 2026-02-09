@@ -13,7 +13,6 @@ const UserSchema = new mongoose.Schema({
   banner: { type: String, default: "" },
   bio: { type: String, default: "" },
   
-  // IDENTITY BADGES
   badges: [{ 
     type: { type: String, enum: ['developer', 'tester', 'early_access', 'beta', 'premium', 'architect', 'moderator'] },
     label: String
@@ -29,7 +28,6 @@ const UserSchema = new mongoose.Schema({
   inboundRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   outboundRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   
-  vanityHandle: { type: String, unique: true, sparse: true },
   tier: { type: String, enum: ['standard', 'elite'], default: 'standard' },
   customStatus: { type: String, default: "" },
   

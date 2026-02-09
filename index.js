@@ -5,6 +5,8 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const { Server } = require('socket.io');
 const Message = require('./models/Message');
+const Channel = require('./models/Channel');
+const Realm = require('./models/Realm');
 
 const app = express();
 const server = http.createServer(app);
@@ -25,25 +27,44 @@ app.get('/api/health', (req, res) => res.json({ status: 'NEXUS_ONLINE', timestam
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/dms', require('./routes/dms'));
+app.use('/api/users', require('./routes/users'));
 app.use('/api/realms', require('./routes/realms'));
 app.use('/api/channels', require('./routes/channels'));
 app.use('/api/posts', require('./routes/posts'));
-app.use('/api/users', require('./routes/users'));
-app.use('/api/dms', require('./routes/dms'));
+app.use('/api/media', require('./routes/media'));
 app.use('/api/search', require('./routes/search'));
 app.use('/api/admin', require('./routes/admin'));
-app.use('/api/payments', require('./routes/payments')); // Added // Added // Added
+app.use('/api/payments', require('./routes/payments'));
 
 // Database
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB connected'))
   .catch(err => console.error('❌ MongoDB connection error:', err));
 
+const jwt = require('jsonwebtoken');
+
 // Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173",
+    origin: "*",
     methods: ["GET", "POST"]
+  }
+});
+
+app.set('socketio', io);
+
+// Authentication Middleware for Socket.IO
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token || socket.handshake.query.token;
+  if (!token) return next(new Error("Authentication error"));
+  
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.user = decoded;
+    next();
+  } catch (err) {
+    next(new Error("Authentication error"));
   }
 });
 
@@ -52,10 +73,10 @@ const onlineUsers = new Map();
 const voiceRooms = {}; // { roomID: [socketID, ...] }
 
 io.on('connection', (socket) => {
-  const userId = socket.handshake.query.userId;
+  const userId = socket.user.id || socket.user._id;
   
   if (userId) {
-    console.log(`⚡ User connected: ${userId} (${socket.id})`);
+    console.log(`⚡ Authenticated user connected: ${userId} (${socket.id})`);
     if (!onlineUsers.has(userId)) onlineUsers.set(userId, new Set());
     onlineUsers.get(userId).add(socket.id);
     io.emit('user_status_change', { userId, status: 'online' });
@@ -103,42 +124,66 @@ io.on('connection', (socket) => {
   });
 
   socket.on('send_message', async (data) => {
+    console.log(`💬 Message from ${userId} for channel ${data.channelId}`);
     try {
-      const channel = await require('./models/Channel').findById(data.channelId);
+      const channel = await Channel.findById(data.channelId);
       if (!channel) return;
 
       // Basic security: Ensure sender is part of the channel/DM
-      if (channel.type === 'dm') {
-        if (!channel.members.includes(data.senderId)) return;
+      if (channel.type === 'dm' || channel.type === 'group_dm') {
+        if (!channel.members.some(m => m.toString() === userId)) return;
       } else {
-        const realm = await require('./models/Realm').findById(channel.realm);
-        if (!realm || !realm.members.includes(data.senderId)) return;
+        const realm = await Realm.findById(channel.realm);
+        if (!realm || !realm.members.some(m => m.toString() === userId)) return;
       }
 
       const newMessage = new Message({
         channel: data.channelId,
-        sender: data.senderId,
+        sender: userId, // SECURE: Use authenticated ID
         content: data.content
       });
       await newMessage.save();
 
+      // Populate sender info for the client
+      const populatedMessage = await Message.findById(newMessage._id).populate('sender', 'username avatar badges tier isAdmin');
+
+      // UPDATE CHANNEL TIMESTAMP
+      channel.lastMessageAt = new Date();
+      await channel.save();
+
       io.to(data.channelId).emit('receive_message', {
-        _id: newMessage._id,
-        content: newMessage.content,
-        timestamp: newMessage.timestamp,
-        sender: data.senderUserObject
+        _id: populatedMessage._id,
+        content: populatedMessage.content,
+        timestamp: populatedMessage.timestamp,
+        sender: populatedMessage.sender
       });
     } catch (err) {
-      console.error(err);
+      console.error("Socket send_message error:", err);
     }
   });
 
-  socket.on('new_post_created', (data) => {
-    io.to(data.channelId).emit('receive_post', data.post);
-  });
-
-  socket.on('disconnect', () => {
-    if (userId && onlineUsers.has(userId)) {
+      socket.on('react_message', async ({ messageId, emoji, userId, channelId }) => {
+        try {
+          const msg = await Message.findById(messageId);
+          if (!msg) return;
+          
+          if (!msg.reactions) msg.reactions = {};
+          
+          const currentReactions = msg.reactions[emoji] || [];
+          const index = currentReactions.indexOf(userId);
+          
+          if (index === -1) currentReactions.push(userId);
+          else currentReactions.splice(index, 1);
+          
+          msg.reactions[emoji] = currentReactions;
+          msg.markModified('reactions'); // Tell Mongoose the object changed
+          await msg.save();
+          
+          io.to(channelId).emit('message_reaction_update', { messageId, reactions: msg.reactions });
+        } catch (err) { console.error(err); }
+      });
+  
+      socket.on('disconnect', () => {    if (userId && onlineUsers.has(userId)) {
       const userSockets = onlineUsers.get(userId);
       userSockets.delete(socket.id);
       
@@ -152,6 +197,6 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });

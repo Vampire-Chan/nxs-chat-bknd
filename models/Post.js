@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const PostSchema = new mongoose.Schema({
-  channel: { type: mongoose.Schema.Types.ObjectId, ref: 'Channel', required: true },
+  channel: { type: mongoose.Schema.Types.ObjectId, ref: 'Channel' },
   author: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   imageUrl: { type: String, required: true }, // Cloudinary URL
   caption: { type: String, default: "" },

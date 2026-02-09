@@ -5,10 +5,20 @@ const RealmSchema = new mongoose.Schema({
   icon: { type: String, default: "" },
   owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   
-  // ROLES & SOVEREIGNTY
-  moderators: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  verifiedMembers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // For Announcement Posting
-  
+  // SOVEREIGN ROLE MATRIX
+  roles: [{
+    name: { type: String, required: true },
+    color: { type: String, default: "#00d2ff" },
+    permissions: [{ type: String, enum: ['ADMIN', 'MANAGE_CHANNELS', 'KICK_MEMBERS', 'BAN_MEMBERS', 'POST_ANNOUNCEMENTS'] }],
+    position: { type: Number, default: 0 }
+  }],
+
+  // MEMBER -> ROLE MAPPING
+  memberRoles: [{
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    roleId: { type: String } // Refers to the ID in the roles array
+  }],
+
   members: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   channels: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Channel' }],
   
