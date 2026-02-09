@@ -82,9 +82,16 @@ router.post('/nexus/sync/:id/accept', auth, async (req, res) => {
 // PROFILE UPDATE
 router.put('/me', auth, identityUpload, async (req, res) => {
   try {
-    const { bio, status, customStatus, isPrivate } = req.body;
+    const { bio, status, customStatus, isPrivate, displayName, dob } = req.body;
     const currentUser = await User.findById(req.user.id);
     const updateData = {};
+
+    if (displayName !== undefined) updateData.displayName = displayName.substring(0, 32);
+    
+    // DOB Lock Protocol: Only allow setting if currently null
+    if (dob && !currentUser.dob) {
+      updateData.dob = new Date(dob);
+    }
 
     if (bio !== undefined) updateData.bio = bio.substring(0, 300);
     if (status) updateData.status = status;

@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const RealmSchema = new mongoose.Schema({
   name: { type: String, required: true },
   icon: { type: String, default: "" },
+  banner: { type: String, default: "" },
   owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   
   // SOVEREIGN ROLE MATRIX
