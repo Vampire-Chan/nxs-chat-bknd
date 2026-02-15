@@ -23,7 +23,10 @@ const UserSchema = new mongoose.Schema({
   following: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   status: { type: String, enum: ['online', 'idle', 'dnd', 'offline'], default: 'online' },
-  isPrivate: { type: Boolean, default: false },
+  isPrivate: { type: Boolean, default: true },
+  showAge: { type: Boolean, default: false },
+  isDisabled: { type: Boolean, default: false },
+  scheduledDeletion: { type: Date, default: null },
   
   inboundRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   outboundRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],

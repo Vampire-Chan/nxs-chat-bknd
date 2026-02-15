@@ -24,6 +24,7 @@ const RealmSchema = new mongoose.Schema({
   channels: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Channel' }],
   
   vanityHandle: { type: String, unique: true, sparse: true },
+  isDiscoverable: { type: Boolean, default: false },
   tier: { type: String, enum: ['standard', 'elite'], default: 'standard' },
   
   createdAt: { type: Date, default: Date.now }

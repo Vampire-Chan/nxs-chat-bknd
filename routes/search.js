@@ -13,7 +13,12 @@ router.get('/', auth, async (req, res) => {
     const regex = new RegExp(q, 'i');
     
     const [users, realms, posts] = await Promise.all([
-      User.find({ $or: [{ username: regex }, { displayName: regex }] }).limit(5).select('username avatar displayName'),
+      User.find({ 
+        $and: [
+          { $or: [{ username: regex }, { displayName: regex }] },
+          { isDisabled: { $ne: true } }
+        ]
+      }).limit(5).select('username avatar displayName'),
       Realm.find({ name: regex }).limit(5),
       Post.find({ caption: regex }).limit(5).populate('author', 'username avatar')
     ]);

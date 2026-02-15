@@ -43,16 +43,21 @@ router.post('/register', async (req, res) => {
       displayName: displayName || username, 
       dob, 
       totpSecret: secret, 
-      isVerified: false 
+      isVerified: false,
+      isPrivate: true // Explicitly private by default
     });
     await newUser.save();
 
-    const issuer = 'NexusChat';
+    const issuer = 'Yantravani';
     const label = `${issuer}:${username}`;
     const otpauth = `otpauth://totp/${encodeURIComponent(label)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
     const qrImageUrl = await qrcode.toDataURL(otpauth);
 
-    res.status(201).json({ message: "Identity created. Scan QR Code.", qrCode: qrImageUrl, secret: secret });
+    res.status(201).json({ 
+      message: "Identity created. Scan QR Code.", 
+      qrCode: qrImageUrl, 
+      secret: secret // Raw secret for manual entry
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -70,6 +75,13 @@ router.post('/verify-registration', async (req, res) => {
     if (!isValid) return res.status(400).json({ message: "Invalid Code" });
 
     user.isVerified = true;
+    
+    // Recovery Protocol: Cancel termination if user logs in
+    if (user.scheduledDeletion) {
+      user.scheduledDeletion = null;
+      user.isDisabled = false;
+    }
+    
     await user.save();
 
     // Create Notification
@@ -95,8 +107,8 @@ router.post('/setup', auth, upload.single('avatar'), async (req, res) => {
     if (bio) updateData.bio = bio;
     if (req.file) updateData.avatar = req.file.path;
 
-    const user = await User.findByIdAndUpdate(req.user.id, { $set: updateData }, { new: true });
-    res.json({ message: "Identity Calibration Complete", user });
+    const user = await User.findByIdAndUpdate(req.user.id, { $set: updateData }, { new: true }).select('-totpSecret');
+    res.json({ message: "Identity Calibration Complete", user: { ...user.toObject(), id: user._id } });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -112,6 +124,13 @@ router.post('/login', async (req, res) => {
 
     const isValid = await otplib.verify({ token, secret: user.totpSecret });
     if (!isValid) return res.status(400).json({ message: "Invalid Code" });
+
+    // Recovery Protocol
+    if (user.scheduledDeletion) {
+      user.scheduledDeletion = null;
+      user.isDisabled = false;
+      await user.save();
+    }
 
     await new Notification({
       recipient: user._id,

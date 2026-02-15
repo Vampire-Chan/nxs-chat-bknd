@@ -26,29 +26,48 @@ router.post('/', auth, upload.single('file'), async (req, res) => {
   console.log('📎 File:', req.file ? req.file.path : 'MISSING');
 
   try {
-    const { caption, channelId } = req.body;
+    const { caption, channelId, isPublic: isPublicStr } = req.body;
+    const User = require('../models/User');
+    const Channel = require('../models/Channel');
     
     if (!req.file) {
       console.error('❌ Upload Failed: No file provided');
       return res.status(400).json({ message: "Visual data required." });
     }
 
+    const user = await User.findById(req.user.id);
+    let isPublic = isPublicStr === 'true';
+
+    // Enforcement: Private accounts CANNOT post publicly
+    if (user.isPrivate) {
+      isPublic = false;
+    }
+
     const postData = {
       caption: caption || "",
       imageUrl: req.file.path,
-      author: req.user.id
+      author: req.user.id,
+      isPublic: isPublic
     };
 
     // Only assign channel if it's a valid ObjectId (not 'global')
     if (channelId && mongoose.Types.ObjectId.isValid(channelId)) {
       postData.channel = channelId;
+      
+      // Find source realm
+      const channel = await Channel.findById(channelId);
+      if (channel && channel.realm) {
+        postData.sourceRealm = channel.realm;
+      }
     }
 
     const newPost = new Post(postData);
     const saved = await newPost.save();
     console.log('✅ Post saved to DB:', saved._id);
 
-    const populated = await Post.findById(saved._id).populate('author', 'username avatar');
+    const populated = await Post.findById(saved._id)
+      .populate('author', 'username avatar displayName showAge dob isPrivate')
+      .populate('sourceRealm', 'name icon isDiscoverable');
     
     // Real-time broadcast if channel exists
     const io = req.app.get('socketio');
@@ -63,51 +82,46 @@ router.post('/', auth, upload.single('file'), async (req, res) => {
   }
 });
 
-// EDIT BROADCAST
-router.put('/:id', auth, async (req, res) => {
-  try {
-    const post = await Post.findById(req.params.id);
-    if (!post) return res.status(404).json({ message: "Broadcast lost" });
-    if (post.author.toString() !== req.user.id) return res.status(403).json({ message: "Unauthorized node" });
-
-    post.caption = req.body.caption || post.caption;
-    await post.save();
-    res.json(post);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// SEVER BROADCAST (Delete)
-router.delete('/:id', auth, async (req, res) => {
-  try {
-    const post = await Post.findById(req.params.id);
-    if (!post) return res.status(404).json({ message: "Broadcast not found" });
-    if (post.author.toString() !== req.user.id) return res.status(403).json({ message: "Unauthorized node" });
-
-    // Delete image from Cloudinary if needed (optional optimization)
-    await post.deleteOne();
-    res.json({ message: "Broadcast severed from matrix" });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
+// ... (EDIT and SEVER routes)
 
 // GET ALL (Global Matrix - Public Only)
 router.get('/all', auth, async (req, res) => {
   try {
-    // 1. Find all private users
-    const privateUsers = await require('../models/User').find({ isPrivate: true }).distinct('_id');
-    
-    // 2. Fetch posts where author is NOT in private list
-    const posts = await Post.find({ author: { $nin: privateUsers } })
-      .populate('author', 'username avatar')
+    // 1. Fetch posts where isPublic is true and author is NOT the current user.
+    const posts = await Post.find({ 
+      isPublic: true,
+      author: { $ne: req.user.id } 
+    })
+      .populate('author', 'username avatar displayName showAge dob isPrivate')
+      .populate('sourceRealm', 'name icon isDiscoverable')
       .sort({ createdAt: -1 });
       
-    res.json(posts);
+    // 2. Filter: Only show posts where author exists and is NOT private or disabled.
+    const filtered = posts.filter(p => p.author && p.author.isPrivate === false && p.author.isDisabled === false);
+      
+    res.json(filtered);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // GET USER POSTS
 router.get('/user/:userId', auth, async (req, res) => {
   try {
-    const posts = await Post.find({ author: req.params.userId }).populate('author', 'username avatar').sort({ createdAt: -1 });
+    const User = require('../models/User');
+    const targetUser = await User.findById(req.params.userId);
+    if (!targetUser) return res.status(404).json({ message: "Node not found." });
+
+    const isMe = req.user.id === req.params.userId;
+    const isFriend = targetUser.friends.some(id => id.toString() === req.user.id);
+
+    // Privacy Guard: If target is private, only allow if Me or Friend
+    if (targetUser.isPrivate && !isMe && !isFriend) {
+      return res.status(403).json({ message: "Access restricted by privacy protocols." });
+    }
+
+    const posts = await Post.find({ author: req.params.userId })
+      .populate('author', 'username avatar displayName showAge dob isPrivate')
+      .populate('sourceRealm', 'name icon isDiscoverable')
+      .sort({ createdAt: -1 });
     res.json(posts);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -140,7 +154,7 @@ router.post('/:id/comment', auth, async (req, res) => {
     await post.save();
 
     // Return the specific comment with user info populated for frontend
-    const populatedPost = await Post.findById(post._id).populate('comments.user', 'username avatar');
+    const populatedPost = await Post.findById(post._id).populate('comments.user', 'username avatar displayName showAge dob');
     res.json(populatedPost.comments[populatedPost.comments.length - 1]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

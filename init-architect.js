@@ -19,7 +19,7 @@ mongoose.connect(process.env.MONGO_URI)
 
     user.isAdmin = true;
     user.badges = [
-      { type: 'developer', label: 'Nexus Creator' },
+      { type: 'developer', label: 'Yantravani Creator' },
       { type: 'architect', label: 'Prime Architect' }
     ];
     user.tier = 'elite';

@@ -23,7 +23,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Health Check
-app.get('/api/health', (req, res) => res.json({ status: 'NEXUS_ONLINE', timestamp: new Date() }));
+app.get('/api/health', (req, res) => res.json({ status: 'VANI_ONLINE', timestamp: new Date() }));
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
@@ -73,10 +73,14 @@ const onlineUsers = new Map();
 const voiceRooms = {}; // { roomID: [socketID, ...] }
 
 io.on('connection', (socket) => {
-  const userId = socket.user.id || socket.user._id;
+  const userId = (socket.user.id || socket.user._id)?.toString();
   
   if (userId) {
     console.log(`⚡ Authenticated user connected: ${userId} (${socket.id})`);
+    
+    // Join private identity room for targeted updates
+    socket.join(userId);
+    
     if (!onlineUsers.has(userId)) onlineUsers.set(userId, new Set());
     onlineUsers.get(userId).add(socket.id);
     io.emit('user_status_change', { userId, status: 'online' });

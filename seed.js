@@ -21,18 +21,18 @@ const seedData = async () => {
     const hashedPassword = await bcrypt.hash('password123', salt);
 
     const adminUser = await User.create({
-      username: 'NexusAdmin',
-      email: 'admin@nexus.com',
+      username: 'YantravaniAdmin',
+      email: 'admin@Yantravani.com',
       password: hashedPassword,
       bio: 'The creator of this universe.',
-      avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=NexusAdmin' 
+      avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=YantravaniAdmin' 
     });
     console.log('👤 Created Admin User:', adminUser.username);
 
     // 3. Create Global Realm
     const globalRealm = await Realm.create({
-      name: 'Nexus Global',
-      icon: 'https://api.dicebear.com/7.x/identicon/svg?seed=NexusGlobal',
+      name: 'Yantravani Global',
+      icon: 'https://api.dicebear.com/7.x/identicon/svg?seed=YantravaniGlobal',
       owner: adminUser._id,
       members: [adminUser._id]
     });
