@@ -9,9 +9,16 @@ const PostSchema = new mongoose.Schema({
   tags: [{ type: String }], // Added
   likes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   isPublic: { type: Boolean, default: false },
+  detectedSectors: [{ type: String }],
+  aiAnalysis: {
+    mood: String,
+    confidence: Number,
+    tokens: [String]
+  },
   comments: [{
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     text: String,
+    parentCommentId: { type: mongoose.Schema.Types.ObjectId }, // Added for chain comments
     createdAt: { type: Date, default: Date.now }
   }],
   createdAt: { type: Date, default: Date.now }

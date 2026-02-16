@@ -204,4 +204,8 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Node established on port ${PORT}`);
+  
+  // Start the 6-hour Resonance Worker (The Dreamer)
+  const { startResonanceWorker } = require('./utils/resonanceWorker');
+  startResonanceWorker();
 });

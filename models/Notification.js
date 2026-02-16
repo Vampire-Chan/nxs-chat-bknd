@@ -5,7 +5,7 @@ const NotificationSchema = new mongoose.Schema({
   sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // System if null
   type: { 
     type: String, 
-    enum: ['like', 'comment', 'follow', 'login', 'mention', 'system', 'sync_request'],
+    enum: ['like', 'comment', 'reply', 'follow', 'login', 'mention', 'system', 'sync_request'],
     required: true 
   },
   content: { type: String }, // e.g. "Liked your broadcast" or "New login from Windows"

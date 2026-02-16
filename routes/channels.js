@@ -103,6 +103,7 @@ router.get('/:id/posts', auth, async (req, res) => {
     const posts = await Post.find({ channel: req.params.id })
       .populate('author', 'username avatar displayName showAge dob isPrivate')
       .populate('sourceRealm', 'name icon isDiscoverable')
+      .populate('comments.user', 'username avatar displayName isPrivate')
       .sort({ createdAt: -1 });
     res.json(posts);
   } catch (err) { res.status(500).json({ error: err.message }); }

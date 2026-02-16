@@ -32,6 +32,7 @@ const UserSchema = new mongoose.Schema({
   outboundRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   
   tier: { type: String, enum: ['standard', 'elite'], default: 'standard' },
+  creationUI: { type: String, enum: ['auto', 'bar', 'button'], default: 'auto' },
   customStatus: { type: String, default: "" },
   
   recoveryKeys: [{
@@ -39,6 +40,11 @@ const UserSchema = new mongoose.Schema({
     isUsed: { type: Boolean, default: false }
   }],
   isAdmin: { type: Boolean, default: false },
+  frequencyMap: {
+    type: Map,
+    of: Number,
+    default: {}
+  },
   createdAt: { type: Date, default: Date.now }
 });
 
