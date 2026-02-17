@@ -45,15 +45,18 @@ router.post('/vani/sync/:id', auth, async (req, res) => {
       await targetUser.save(); 
       await currentUser.save();
       
-      await new Notification({ 
+      const notif = new Notification({ 
         recipient: req.params.id, 
         sender: req.user.id, 
         type: 'sync_request', 
         content: 'is attempting to link with your private node.' 
-      }).save();
+      });
+      await notif.save();
+      const populated = await Notification.findById(notif._id).populate('sender', 'username avatar');
       
       const io = req.app.get('socketio');
       if (io) {
+        io.to(req.params.id.toString()).emit('new_notification', populated);
         io.to(req.params.id.toString()).emit('identity_sync_update');
         io.to(req.user.id.toString()).emit('identity_sync_update');
       }
@@ -73,15 +76,18 @@ router.post('/vani/sync/:id', auth, async (req, res) => {
       await currentUser.save(); 
       await targetUser.save();
       
-      await new Notification({ 
+      const notif = new Notification({ 
         recipient: req.params.id, 
         sender: req.user.id, 
         type: 'follow', 
         content: 'is now syncing with your public transmissions.' 
-      }).save();
+      });
+      await notif.save();
+      const populated = await Notification.findById(notif._id).populate('sender', 'username avatar');
       
       const io = req.app.get('socketio');
       if (io) {
+        io.to(req.params.id.toString()).emit('new_notification', populated);
         io.to(req.params.id.toString()).emit('identity_sync_update');
         io.to(req.user.id.toString()).emit('identity_sync_update');
       }

@@ -246,16 +246,21 @@ router.post('/:id/like', auth, async (req, res) => {
       
       // NOTIFICATION: Liked broadcast
       if (post.author.toString() !== req.user.id) {
-        await new Notification({
+        const notif = new Notification({
           recipient: post.author,
           sender: req.user.id,
           type: 'like',
           content: 'linked with your transmission.',
           metadata: { postId: post._id }
-        }).save();
+        });
+        await notif.save();
         
+        const populatedNotif = await Notification.findById(notif._id).populate('sender', 'username avatar');
         const io = req.app.get('socketio');
-        if (io) io.to(post.author.toString()).emit('identity_sync_update');
+        if (io) {
+          io.to(post.author.toString()).emit('new_notification', populatedNotif);
+          io.to(post.author.toString()).emit('identity_sync_update');
+        }
       }
     } else {
       post.likes.splice(index, 1);
@@ -295,28 +300,38 @@ router.post('/:id/comment', auth, async (req, res) => {
 
     // 1. Notify Post Owner
     if (post.author.toString() !== req.user.id) {
-      await new Notification({
+      const notif = new Notification({
         recipient: post.author,
         sender: req.user.id,
         type: 'comment',
         content: 'added data to your broadcast.',
         metadata: { postId: post._id }
-      }).save();
-      if (io) io.to(post.author.toString()).emit('identity_sync_update');
+      });
+      await notif.save();
+      const populated = await Notification.findById(notif._id).populate('sender', 'username avatar');
+      if (io) {
+        io.to(post.author.toString()).emit('new_notification', populated);
+        io.to(post.author.toString()).emit('identity_sync_update');
+      }
     }
 
     // 2. Notify Parent Comment Owner (if reply)
     if (parentCommentId) {
       const parentComment = post.comments.find(c => c._id.toString() === parentCommentId);
       if (parentComment && parentComment.user.toString() !== req.user.id) {
-        await new Notification({
+        const notif = new Notification({
           recipient: parentComment.user,
           sender: req.user.id,
           type: 'reply',
           content: 'replied to your neural feedback.',
           metadata: { postId: post._id }
-        }).save();
-        if (io) io.to(parentComment.user.toString()).emit('identity_sync_update');
+        });
+        await notif.save();
+        const populated = await Notification.findById(notif._id).populate('sender', 'username avatar');
+        if (io) {
+          io.to(parentComment.user.toString()).emit('new_notification', populated);
+          io.to(parentComment.user.toString()).emit('identity_sync_update');
+        }
       }
     }
 

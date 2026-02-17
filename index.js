@@ -166,14 +166,18 @@ io.on('connection', (socket) => {
       const Notification = require('./models/Notification');
       
       for (const recipientId of recipients) {
-        await new Notification({
+        const notif = new Notification({
           recipient: recipientId,
           sender: userId,
           type: 'mention',
           content: channel.type === 'dm' ? 'transmitted a new signal to you.' : `transmitted a signal in #${channel.name}`,
           metadata: { channelId: channel._id }
-        }).save();
+        });
+        await notif.save();
         
+        const populatedNotif = await Notification.findById(notif._id).populate('sender', 'username avatar');
+        
+        io.to(recipientId.toString()).emit('new_notification', populatedNotif);
         io.to(recipientId.toString()).emit('identity_sync_update');
       }
 
