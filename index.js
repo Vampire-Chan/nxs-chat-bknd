@@ -144,23 +144,24 @@ io.on('connection', (socket) => {
       const newMessage = new Message({
         channel: data.channelId,
         sender: userId, // SECURE: Use authenticated ID
-        content: data.content
+        content: data.content,
+        parentMessage: data.parentMessageId || null
       });
       await newMessage.save();
 
-      // Populate sender info for the client
-      const populatedMessage = await Message.findById(newMessage._id).populate('sender', 'username avatar badges tier isAdmin');
+      // Populate sender info and parent message for the client
+      const populatedMessage = await Message.findById(newMessage._id)
+        .populate('sender', 'username avatar badges tier isAdmin')
+        .populate({
+          path: 'parentMessage',
+          populate: { path: 'sender', select: 'username' }
+        });
 
       // UPDATE CHANNEL TIMESTAMP
       channel.lastMessageAt = new Date();
       await channel.save();
 
-      io.to(data.channelId).emit('receive_message', {
-        _id: populatedMessage._id,
-        content: populatedMessage.content,
-        timestamp: populatedMessage.timestamp,
-        sender: populatedMessage.sender
-      });
+      io.to(data.channelId).emit('receive_message', populatedMessage);
     } catch (err) {
       console.error("Socket send_message error:", err);
     }

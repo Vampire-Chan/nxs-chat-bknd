@@ -7,6 +7,9 @@ const MessageSchema = new mongoose.Schema({
   mediaUrl: { type: String },
   mediaType: { type: String, enum: ['image', 'video', 'file', 'audio'] },
   
+  // REPLY PROTOCOL
+  parentMessage: { type: mongoose.Schema.Types.ObjectId, ref: 'Message', default: null },
+
   // NEURAL REACTIONS: { ':matrix:': [userId1, userId2] }
   reactions: {
     type: mongoose.Schema.Types.Mixed,
