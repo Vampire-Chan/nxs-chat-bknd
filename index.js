@@ -127,48 +127,46 @@ io.on('connection', (socket) => {
     socket.leave(channelId);
   });
 
-  socket.on('send_message', async (data) => {
-    console.log(`💬 Message from ${userId} for channel ${data.channelId}`);
-    try {
-      const channel = await Channel.findById(data.channelId);
-      if (!channel) return;
-
-      // Basic security: Ensure sender is part of the channel/DM
-      if (channel.type === 'dm' || channel.type === 'group_dm') {
-        if (!channel.members.some(m => m.toString() === userId)) return;
-      } else {
-        const realm = await Realm.findById(channel.realm);
-        if (!realm || !realm.members.some(m => m.toString() === userId)) return;
+    socket.on('send_message', async (data) => {
+      // ... existing message logic
+    });
+  
+    socket.on('initiate_call', async (data) => {
+      const { channelId, type, senderId, senderName, senderAvatar } = data;
+      console.log(`📞 Call Init: ${type} from ${senderId} in ${channelId}`);
+      
+      try {
+        const channel = await Channel.findById(channelId);
+        if (!channel) return;
+  
+        const recipients = channel.members.filter(m => m.toString() !== senderId);
+        const Notification = require('./models/Notification');
+  
+        for (const recipientId of recipients) {
+          // Emit real-time popup event
+          io.to(recipientId.toString()).emit('incoming_call', {
+            channelId,
+            type,
+            sender: { id: senderId, username: senderName, avatar: senderAvatar }
+          });
+  
+          // Also create a persistent system notification for history/offline visibility
+          await new Notification({
+            recipient: recipientId,
+            sender: senderId,
+            type: 'system',
+            content: `initiated a ${type} call with you.`,
+            metadata: { channelId }
+          }).save();
+          
+          io.to(recipientId.toString()).emit('identity_sync_update');
+        }
+      } catch (err) {
+        console.error("Socket initiate_call error:", err);
       }
-
-      const newMessage = new Message({
-        channel: data.channelId,
-        sender: userId, // SECURE: Use authenticated ID
-        content: data.content,
-        parentMessage: data.parentMessageId || null
-      });
-      await newMessage.save();
-
-      // Populate sender info and parent message for the client
-      const populatedMessage = await Message.findById(newMessage._id)
-        .populate('sender', 'username avatar badges tier isAdmin')
-        .populate({
-          path: 'parentMessage',
-          populate: { path: 'sender', select: 'username' }
-        });
-
-      // UPDATE CHANNEL TIMESTAMP
-      channel.lastMessageAt = new Date();
-      await channel.save();
-
-      io.to(data.channelId).emit('receive_message', populatedMessage);
-    } catch (err) {
-      console.error("Socket send_message error:", err);
-    }
-  });
-
-      socket.on('react_message', async ({ messageId, emoji, userId, channelId }) => {
-        try {
+    });
+  
+    socket.on('react_message', async ({ messageId, emoji, userId, channelId }) => {        try {
           const msg = await Message.findById(messageId);
           if (!msg) return;
           

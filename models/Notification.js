@@ -11,6 +11,7 @@ const NotificationSchema = new mongoose.Schema({
   content: { type: String }, // e.g. "Liked your broadcast" or "New login from Windows"
   metadata: {
     postId: { type: mongoose.Schema.Types.ObjectId, ref: 'Post' },
+    channelId: { type: mongoose.Schema.Types.ObjectId, ref: 'Channel' },
     deviceName: { type: String },
     location: { type: String }
   },
