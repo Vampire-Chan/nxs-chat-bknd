@@ -123,7 +123,18 @@ router.post('/login', async (req, res) => {
     if (!user.isVerified) return res.status(403).json({ message: "Account setup not complete." });
 
     const isValid = await otplib.verify({ token, secret: user.totpSecret });
-    if (!isValid) return res.status(400).json({ message: "Invalid Code" });
+    
+    let isRecovery = false;
+    if (!isValid && user.recoveryKeys && user.recoveryKeys.length > 0) {
+      const keyIndex = user.recoveryKeys.findIndex(k => k.code === token && !k.isUsed);
+      if (keyIndex !== -1) {
+        user.recoveryKeys[keyIndex].isUsed = true;
+        user.markModified('recoveryKeys');
+        isRecovery = true;
+      }
+    }
+
+    if (!isValid && !isRecovery) return res.status(400).json({ message: "Invalid access key or recovery code." });
 
     // Recovery Protocol
     if (user.scheduledDeletion) {

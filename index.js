@@ -70,52 +70,69 @@ io.use((socket, next) => {
 
 // Track Online Users & Voice Rooms
 const onlineUsers = new Map(); 
-const voiceRooms = {}; // { roomID: [socketID, ...] }
+const voiceRooms = {}; // { roomID: [{ socketId, user }, ...] }
 
 io.on('connection', (socket) => {
   const userId = (socket.user.id || socket.user._id)?.toString();
   
   if (userId) {
     console.log(`⚡ Authenticated user connected: ${userId} (${socket.id})`);
-    
-    // Join private identity room for targeted updates
     socket.join(userId);
-    
     if (!onlineUsers.has(userId)) onlineUsers.set(userId, new Set());
     onlineUsers.get(userId).add(socket.id);
     io.emit('user_status_change', { userId, status: 'online' });
   }
 
   // --- WEBRTC SIGNALING ---
-  socket.on('join_voice', (roomID) => {
+  socket.on('join_voice', ({ roomID, user }) => {
+    const userData = { socketId: socket.id, user };
     if (voiceRooms[roomID]) {
-      const length = voiceRooms[roomID].length;
-      if (length === 4) {
+      // IDEMPOTENCY CHECK: Don't add same socket twice
+      if (voiceRooms[roomID].some(u => u.socketId === socket.id)) return;
+
+      if (voiceRooms[roomID].length >= 12) { // Increased for server capacity
         socket.emit('room_full');
         return;
       }
-      voiceRooms[roomID].push(socket.id);
+      voiceRooms[roomID].push(userData);
     } else {
-      voiceRooms[roomID] = [socket.id];
+      voiceRooms[roomID] = [userData];
     }
     
-    // Get other users in this room
-    const otherUsers = voiceRooms[roomID].filter(id => id !== socket.id);
+    socket.join(`voice:${roomID}`);
+    const otherUsers = voiceRooms[roomID].filter(u => u.socketId !== socket.id);
     socket.emit('all_users', otherUsers);
   });
 
   socket.on('sending_signal', payload => {
-    io.to(payload.userToSignal).emit('user_joined', { signal: payload.signal, callerID: payload.callerID });
+    // payload: { userToSignal (socketId), callerID (socketId), signal, user (callerProfile) }
+    io.to(payload.userToSignal).emit('user_joined', { 
+      signal: payload.signal, 
+      callerID: payload.callerID,
+      user: payload.user 
+    });
   });
 
   socket.on('returning_signal', payload => {
-    io.to(payload.callerID).emit('receiving_returned_signal', { signal: payload.signal, id: socket.id });
+    // payload: { signal, callerID (initiatorSocketId) }
+    io.to(payload.callerID).emit('receiving_returned_signal', { 
+      signal: payload.signal, 
+      id: socket.id 
+    });
   });
 
   socket.on('leave_voice', ({ channelId }) => {
     if (voiceRooms[channelId]) {
-      voiceRooms[channelId] = voiceRooms[channelId].filter(id => id !== socket.id);
+      voiceRooms[channelId] = voiceRooms[channelId].filter(u => u.socketId !== socket.id);
+      if (voiceRooms[channelId].length === 0) delete voiceRooms[channelId];
     }
+    socket.leave(`voice:${channelId}`);
+    socket.to(`voice:${channelId}`).emit('user_left_voice', socket.id);
+  });
+
+  socket.on('reject_call', ({ channelId, senderId }) => {
+    // senderId here is actually the User ID of the caller
+    io.to(senderId).emit('call_rejected', { channelId });
   });
 
   // --- STANDARD CHAT LOGIC ---
@@ -244,6 +261,17 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    // --- VOICE ROOM CLEANUP ---
+    for (const roomID in voiceRooms) {
+      const index = voiceRooms[roomID].findIndex(u => u.socketId === socket.id);
+      if (index !== -1) {
+        voiceRooms[roomID].splice(index, 1);
+        if (voiceRooms[roomID].length === 0) delete voiceRooms[roomID];
+        io.to(`voice:${roomID}`).emit('user_left_voice', socket.id);
+        console.log(`📡 Cleaned up voice room ${roomID} for disconnected socket ${socket.id}`);
+      }
+    }
+
     if (userId && onlineUsers.has(userId)) {
       const userSockets = onlineUsers.get(userId);
       userSockets.delete(socket.id);
@@ -265,4 +293,62 @@ server.listen(PORT, '0.0.0.0', () => {
   // Start the 6-hour Resonance Worker (The Dreamer)
   const { startResonanceWorker } = require('./utils/resonanceWorker');
   startResonanceWorker();
+
+  // START SCHEDULED MESSAGE WORKER (Every 1 minute)
+  const ScheduledMessage = require('./models/ScheduledMessage');
+  const Message = require('./models/Message');
+  const Channel = require('./models/Channel');
+  const Notification = require('./models/Notification');
+
+  setInterval(async () => {
+    try {
+      const now = new Date();
+      const pending = await ScheduledMessage.find({ 
+        scheduledFor: { $lte: now }, 
+        isProcessed: false 
+      });
+
+      for (const item of pending) {
+        // CONVERT TO REAL MESSAGE
+        const newMessage = new Message({
+          channel: item.channel,
+          sender: item.sender,
+          content: item.content,
+          parentMessage: item.parentMessage,
+          timestamp: item.scheduledFor
+        });
+        await newMessage.save();
+
+        const channel = await Channel.findById(item.channel);
+        if (channel) {
+          channel.lastMessageAt = now;
+          await channel.save();
+
+          // POPULATE & BROADCAST
+          const populated = await Message.findById(newMessage._id).populate('sender', 'username avatar badges tier isAdmin');
+          io.to(item.channel.toString()).emit('receive_message', populated);
+
+          // NOTIFY RECIPIENTS
+          const recipients = channel.members.filter(m => m.toString() !== item.sender.toString());
+          for (const recipientId of recipients) {
+            const notif = new Notification({
+              recipient: recipientId,
+              sender: item.sender,
+              type: 'mention',
+              content: channel.type === 'dm' ? 'transmitted a scheduled signal to you.' : `transmitted a scheduled signal in #${channel.name}`,
+              metadata: { channelId: channel._id }
+            });
+            await notif.save();
+            const populatedNotif = await Notification.findById(notif._id).populate('sender', 'username avatar');
+            io.to(recipientId.toString()).emit('new_notification', populatedNotif);
+            io.to(recipientId.toString()).emit('identity_sync_update');
+          }
+        }
+
+        item.isProcessed = true;
+        await item.save();
+        console.log(`⏰ Dispatched scheduled message: ${item._id}`);
+      }
+    } catch (e) { console.error("Scheduled Message Worker Error:", e); }
+  }, 60000);
 });

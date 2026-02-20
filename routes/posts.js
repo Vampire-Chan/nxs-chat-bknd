@@ -268,6 +268,10 @@ router.post('/:id/like', auth, async (req, res) => {
       await resonance.updateResonance(user, post.tags, post.caption, -1);
     }
     await post.save();
+
+    // AUTO-CLEAR NOTIFICATIONS FOR THIS POST
+    await Notification.updateMany({ recipient: req.user.id, 'metadata.postId': post._id, isRead: false }, { $set: { isRead: true } });
+
     res.json({ likes: post.likes });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -339,6 +343,9 @@ router.post('/:id/comment', auth, async (req, res) => {
     const populatedPost = await Post.findById(post._id).populate('comments.user', 'username avatar displayName showAge dob isPrivate');
     const responseComment = populatedPost.comments.find(c => c._id.toString() === latestComment._id.toString());
     
+    // AUTO-CLEAR NOTIFICATIONS FOR THIS POST
+    await Notification.updateMany({ recipient: req.user.id, 'metadata.postId': post._id, isRead: false }, { $set: { isRead: true } });
+
     res.json(responseComment);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

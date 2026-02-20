@@ -1,10 +1,12 @@
 const router = require('express').Router();
 const Channel = require('../models/Channel');
 const Message = require('../models/Message');
+const ScheduledMessage = require('../models/ScheduledMessage');
 const Post = require('../models/Post');
+const Notification = require('../models/Notification');
 const auth = require('../middleware/auth');
 
-// 1. EDIT MESSAGE (Specific path first)
+// 1. EDIT MESSAGE
 router.put('/messages/:id', auth, async (req, res) => {
   try {
     const { content } = req.body;
@@ -20,7 +22,6 @@ router.put('/messages/:id', auth, async (req, res) => {
 
     const populated = await Message.findById(msg._id).populate('sender', 'username avatar badges tier isAdmin');
 
-    // Broadcast edit
     const io = req.app.get('socketio');
     if (io) {
       io.to(msg.channel.toString()).emit('message_updated', populated);
@@ -40,10 +41,7 @@ router.delete('/messages/:id', auth, async (req, res) => {
       return res.status(403).json({ message: "Unauthorized severance." });
     }
 
-    const channelId = msg.channel.toString();
     await Message.findByIdAndDelete(req.params.id);
-    
-    // Broadcast deletion if needed (Optional: add message_deleted event)
     res.json({ message: "Transmission erased from matrix." });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -59,6 +57,9 @@ router.post('/:id/read', auth, async (req, res) => {
     channel.lastSeen[userId] = new Date();
     channel.markModified('lastSeen');
     await channel.save();
+
+    await Notification.updateMany({ recipient: userId, 'metadata.channelId': channelId, isRead: false }, { $set: { isRead: true } });
+
     res.json({ message: "Channel synced as read." });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -89,6 +90,8 @@ router.get('/:id/messages', auth, async (req, res) => {
       channel.lastSeen[userId] = new Date();
       channel.markModified('lastSeen');
       await channel.save();
+
+      await Notification.updateMany({ recipient: userId, 'metadata.channelId': channelId, isRead: false }, { $set: { isRead: true } });
     }
     const messages = await Message.find({ channel: channelId })
       .populate('sender', 'username avatar badges tier isAdmin')
@@ -106,6 +109,33 @@ router.get('/:id/posts', auth, async (req, res) => {
       .populate('comments.user', 'username avatar displayName isPrivate')
       .sort({ createdAt: -1 });
     res.json(posts);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 7. SCHEDULE MESSAGE
+router.post('/schedule', auth, async (req, res) => {
+  try {
+    const { channelId, content, scheduledFor, parentMessageId } = req.body;
+    
+    if (!content || !scheduledFor) {
+      return res.status(400).json({ message: "Content and dispatch time required." });
+    }
+
+    const scheduledDate = new Date(scheduledFor);
+    if (scheduledDate <= new Date()) {
+      return res.status(400).json({ message: "Dispatch time must be in the future." });
+    }
+
+    const scheduled = new ScheduledMessage({
+      channel: channelId,
+      sender: req.user.id,
+      content,
+      scheduledFor: scheduledDate,
+      parentMessage: parentMessageId || null
+    });
+
+    await scheduled.save();
+    res.json({ message: "Signal scheduled for future dispatch.", scheduledId: scheduled._id });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

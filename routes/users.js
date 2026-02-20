@@ -199,6 +199,12 @@ router.put('/me', auth, identityUpload, async (req, res) => {
     if (bio !== undefined) updateData.bio = bio.substring(0, 300);
     if (status) updateData.status = status;
     if (customStatus !== undefined) updateData.customStatus = customStatus;
+
+    if (req.body.recoveryKeys) {
+      try {
+        updateData.recoveryKeys = JSON.parse(req.body.recoveryKeys);
+      } catch (e) { console.error("Recovery keys parse error"); }
+    }
     
     if (isPrivate !== undefined) {
       const newPrivateStatus = isPrivate === 'true' || isPrivate === true;
@@ -283,6 +289,38 @@ router.put('/me/notifications/read', auth, async (req, res) => {
   try {
     await Notification.updateMany({ recipient: req.user.id, isRead: false }, { $set: { isRead: true } });
     res.json({ message: "Alerts cleared." });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.put('/me/notifications/read/channel/:channelId', auth, async (req, res) => {
+  try {
+    await Notification.updateMany({ 
+      recipient: req.user.id, 
+      'metadata.channelId': req.params.channelId,
+      isRead: false 
+    }, { $set: { isRead: true } });
+    res.json({ message: "Channel alerts cleared." });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.put('/me/notifications/read/post/:postId', auth, async (req, res) => {
+  try {
+    await Notification.updateMany({ 
+      recipient: req.user.id, 
+      'metadata.postId': req.params.postId,
+      isRead: false 
+    }, { $set: { isRead: true } });
+    res.json({ message: "Post alerts cleared." });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.put('/me/notifications/read/id/:id', auth, async (req, res) => {
+  try {
+    await Notification.findOneAndUpdate(
+      { _id: req.params.id, recipient: req.user.id },
+      { $set: { isRead: true } }
+    );
+    res.json({ message: "Notification cleared." });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -434,5 +472,7 @@ router.get('/:id', auth, async (req, res) => {
     res.json(userObj);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+module.exports = router;
 
 module.exports = router;
