@@ -4,37 +4,64 @@ const Realm = require('../models/Realm');
 const Post = require('../models/Post');
 const auth = require('../middleware/auth');
 
-// GLOBAL MATRIX SEARCH
+// GLOBAL MATRIX SEARCH (Robust Calibration)
 router.get('/', auth, async (req, res) => {
-  const { q } = req.query;
-  if (!q) return res.json({ users: [], realms: [], posts: [] });
+  const { q, type, sortBy, author, startDate, endDate } = req.query;
+  if (!q && !author && !startDate) return res.json({ users: [], realms: [], posts: [] });
 
   try {
     const regex = new RegExp(q, 'i');
-    
-    const [users, realms, posts] = await Promise.all([
-      User.find({ 
+    const results = { users: [], realms: [], posts: [] };
+
+    // 1. SEARCH USERS
+    if (!type || type === 'users') {
+      results.users = await User.find({ 
         $and: [
           { $or: [{ username: regex }, { displayName: regex }] },
           { isDisabled: { $ne: true } }
         ]
-      }).limit(5).select('username avatar displayName'),
-      Realm.find({ name: regex }).limit(5),
-      Post.find({ caption: regex }).limit(5).populate('author', 'username avatar')
-    ]);
+      }).limit(10).select('username avatar displayName tier badges');
+    }
 
-    res.json({ users, realms, posts });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
+    // 2. SEARCH REALMS (Sync with name and owner)
+    if (!type || type === 'realms') {
+      results.realms = await Realm.find({ 
+        $or: [{ name: regex }, { vanityHandle: regex }],
+        isSystem: { $ne: true } 
+      })
+      .populate('owner', 'username avatar')
+      .limit(10);
+    }
 
-// FAST MENTIONS SEARCH (Ultra-lightweight)
-router.get('/mentions', auth, async (req, res) => {
-  const { q } = req.query;
-  try {
-    const users = await User.find({ 
-      username: { $regex: `^${q}`, $options: 'i' } 
-    }).limit(8).select('username avatar displayName');
-    res.json(users);
+    // 3. SEARCH POSTS (Robust filtering)
+    if (!type || type === 'posts') {
+      let postQuery = { 
+        $or: [{ caption: regex }, { 'comments.text': regex }],
+        isPublic: true 
+      };
+
+      if (author) {
+        const authorUser = await User.findOne({ username: author });
+        if (authorUser) postQuery.author = authorUser._id;
+      }
+
+      if (startDate || endDate) {
+        postQuery.createdAt = {};
+        if (startDate) postQuery.createdAt.$gte = new Date(startDate);
+        if (endDate) postQuery.createdAt.$lte = new Date(endDate);
+      }
+
+      let queryExec = Post.find(postQuery).populate('author', 'username avatar').limit(20);
+
+      // Sorting Logic
+      if (sortBy === 'likes') queryExec = queryExec.sort({ 'likes.length': -1 });
+      else if (sortBy === 'comments') queryExec = queryExec.sort({ 'comments.length': -1 });
+      else queryExec = queryExec.sort({ createdAt: -1 });
+
+      results.posts = await queryExec;
+    }
+
+    res.json(results);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

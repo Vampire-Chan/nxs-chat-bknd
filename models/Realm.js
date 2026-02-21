@@ -25,6 +25,7 @@ const RealmSchema = new mongoose.Schema({
   
   vanityHandle: { type: String, unique: true, sparse: true },
   isDiscoverable: { type: Boolean, default: false },
+  isSystem: { type: Boolean, default: false },
   tier: { type: String, enum: ['standard', 'elite'], default: 'standard' },
   
   createdAt: { type: Date, default: Date.now }

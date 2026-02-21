@@ -26,6 +26,7 @@ const UserSchema = new mongoose.Schema({
   isPrivate: { type: Boolean, default: true },
   showAge: { type: Boolean, default: false },
   isDisabled: { type: Boolean, default: false },
+  isShadowBanned: { type: Boolean, default: false },
   scheduledDeletion: { type: Date, default: null },
   
   inboundRequests: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
@@ -45,6 +46,7 @@ const UserSchema = new mongoose.Schema({
     of: Number,
     default: {}
   },
+  lastSeenAt: { type: Date, default: Date.now },
   createdAt: { type: Date, default: Date.now }
 });
 

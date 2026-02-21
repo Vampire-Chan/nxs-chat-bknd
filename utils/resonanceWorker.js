@@ -6,17 +6,44 @@
 
 const Post = require('../models/Post');
 const Trend = require('../models/Trend');
+const User = require('../models/User');
 const aiOracle = require('./aiOracle');
 
 const DREAM_INTERVAL = 6 * 60 * 60 * 1000; // 6 Hours
+const SIX_MONTHS = 6 * 30 * 24 * 60 * 60 * 1000;
 
 const startResonanceWorker = () => {
   console.log("🛠️ [Resonance_Worker] Initializing background dreamer...");
   
   // Run immediately on start, then every 6 hours
-  processPendingTransmissions();
+  syncMatrix();
   
-  setInterval(processPendingTransmissions, DREAM_INTERVAL);
+  setInterval(syncMatrix, DREAM_INTERVAL);
+};
+
+const syncMatrix = async () => {
+  await processPendingTransmissions();
+  await purgeInactiveNodes();
+};
+
+const purgeInactiveNodes = async () => {
+  const threshold = new Date(Date.now() - SIX_MONTHS);
+  console.log(`🧹 [Resonance_Worker] Checking for inactive nodes (Older than ${threshold.toLocaleDateString()})...`);
+  
+  try {
+    // Note: In a production app, you might want to soft-delete or notify first.
+    // For Yantravani "Identity Lost" philosophy, we hard delete.
+    const result = await User.deleteMany({ 
+      lastSeenAt: { $lt: threshold },
+      isAdmin: { $ne: true } // Safety: Never purge the Architect
+    });
+    
+    if (result.deletedCount > 0) {
+      console.log(`   💀 Purged ${result.deletedCount} stagnant identity nodes from the void.`);
+    }
+  } catch (e) {
+    console.error("❌ [Resonance_Worker] Purge failed:", e);
+  }
 };
 
 const processPendingTransmissions = async () => {

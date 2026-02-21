@@ -7,6 +7,7 @@ const { Server } = require('socket.io');
 const Message = require('./models/Message');
 const Channel = require('./models/Channel');
 const Realm = require('./models/Realm');
+const User = require('./models/User');
 
 const app = express();
 const server = http.createServer(app);
@@ -81,6 +82,9 @@ io.on('connection', (socket) => {
     if (!onlineUsers.has(userId)) onlineUsers.set(userId, new Set());
     onlineUsers.get(userId).add(socket.id);
     io.emit('user_status_change', { userId, status: 'online' });
+
+    // Update inactivity anchor
+    User.findByIdAndUpdate(userId, { lastSeenAt: new Date() }).catch(() => {});
   }
 
   // --- WEBRTC SIGNALING ---

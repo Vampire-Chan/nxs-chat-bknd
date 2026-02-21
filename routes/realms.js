@@ -53,8 +53,10 @@ router.put('/:id', auth, realmUpload, async (req, res) => {
 
 router.get('/me', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).populate('realms');
-    res.json(user.realms);
+    const realms = await Realm.find({ 
+      members: new mongoose.Types.ObjectId(req.user.id) 
+    });
+    res.json(realms);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -113,7 +115,14 @@ router.post('/:id/invites', auth, async (req, res) => {
   try {
     const realm = await Realm.findById(req.params.id);
     if (!realm) return res.status(404).json({ message: "Node lost" });
-    if (realm.owner.toString() !== req.user.id) return res.status(403).json({ message: "Sovereign only" });
+    
+    // SYSTEM REALM SECURITY
+    if (realm.isSystem) {
+      const user = await User.findById(req.user.id);
+      if (!user.isAdmin) return res.status(403).json({ message: "The Nexus is closed to external invites." });
+    }
+
+    if (realm.owner.toString() !== req.user.id && !req.user.isAdmin) return res.status(403).json({ message: "Sovereign only" });
 
     const code = crypto.randomBytes(3).toString('hex').toUpperCase();
     const invite = new Invite({ code, realm: req.params.id, inviter: req.user.id });
@@ -141,6 +150,40 @@ router.get('/handle/:vanity', auth, async (req, res) => {
     const realm = await Realm.findOne({ vanityHandle: req.params.vanity });
     if (!realm) return res.status(404).json({ message: "Realm handle not found." });
     res.json(realm);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE REALM
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const realm = await Realm.findById(req.params.id);
+    if (!realm) return res.status(404).json({ message: "Node lost" });
+    if (realm.owner.toString() !== req.user.id) return res.status(403).json({ message: "Sovereign only" });
+    if (realm.isSystem) return res.status(403).json({ message: "The Nexus cannot be collapsed." });
+
+    // Remove from all users
+    await User.updateMany({ realms: realm._id }, { $pull: { realms: realm._id } });
+    // Delete channels
+    await Channel.deleteMany({ realm: realm._id });
+    // Delete realm
+    await Realm.findByIdAndDelete(req.params.id);
+    
+    res.json({ message: "Sovereignty Purge Complete." });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// LEAVE REALM
+router.post('/:id/leave', auth, async (req, res) => {
+  try {
+    const realm = await Realm.findById(req.params.id);
+    if (!realm) return res.status(404).json({ message: "Node lost" });
+    if (realm.owner.toString() === req.user.id) return res.status(400).json({ message: "Sovereigns cannot sever their own link. Use Purge instead." });
+
+    realm.members = realm.members.filter(m => m.toString() !== req.user.id);
+    await realm.save();
+    
+    await User.findByIdAndUpdate(req.user.id, { $pull: { realms: realm._id } });
+    res.json({ message: "Link severed." });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

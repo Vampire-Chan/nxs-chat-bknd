@@ -2,7 +2,11 @@ const mongoose = require('mongoose');
 
 const ChannelSchema = new mongoose.Schema({
   name: { type: String, required: true },
-  type: { type: String, enum: ['text', 'voice', 'feed', 'reels', 'announcement', 'dm', 'group_dm'], default: 'text' },
+  type: { 
+    type: String, 
+    enum: ['text', 'voice', 'feed', 'reels', 'announcement', 'dm', 'group_dm', 'mod_reports', 'mod_messages', 'mod_posts', 'mod_users', 'mod_stats'], 
+    default: 'text' 
+  },
   realm: { type: mongoose.Schema.Types.ObjectId, ref: 'Realm' },
   
   members: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
