@@ -139,7 +139,48 @@ io.on('connection', (socket) => {
     User.findByIdAndUpdate(userId, { lastSeenAt: new Date() }).catch(() => {});
   }
 
-  // --- WEBRTC SIGNALING ---
+  // --- GLOBAL WEBRTC SIGNALING BRIDGE ---
+  socket.on('request_direct_call', async ({ to, type }) => {
+    const fromId = socket.user._id.toString();
+    try {
+      const targetUser = await User.findById(to);
+      if (!targetUser) return;
+
+      // SECURITY: Only allow calls between synced nodes (friends or following)
+      const isFriend = targetUser.friends.some(f => f.toString() === fromId);
+      const isFollowing = targetUser.followers.some(f => f.toString() === fromId);
+      
+      if (!isFriend && !isFollowing && !socket.user.isAdmin) {
+        return socket.emit('call_status_update', { status: 'denied', reason: 'Nodes not synced' });
+      }
+
+      console.log(`📞 Global Call Request: ${fromId} -> ${to} (${type})`);
+      
+      if (onlineUsers.has(to)) {
+        io.to(to).emit('incoming_call', {
+          channelId: `direct:${fromId}`,
+          type,
+          sender: { 
+            id: fromId, 
+            username: socket.user.username, 
+            avatar: socket.user.avatar,
+            gender: socket.user.gender
+          },
+          timestamp: Date.now()
+        });
+        socket.emit('call_status_update', { status: 'ringing', to });
+      } else {
+        socket.emit('call_status_update', { status: 'offline', to });
+      }
+    } catch (e) { console.error(e); }
+  });
+
+  socket.on('signal_direct_call', ({ to, signal }) => {
+    // Forward P2P handshake signal
+    io.to(to).emit('signal_received', { from: socket.id, signal });
+  });
+
+  // --- WEBRTC SIGNALING (Channel Based) ---
   socket.on('join_voice', async ({ roomID }) => {
     try {
       const channel = await Channel.findById(roomID);
