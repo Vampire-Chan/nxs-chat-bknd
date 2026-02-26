@@ -202,7 +202,9 @@ router.get('/all', auth, async (req, res) => {
       .filter(p => {
         if (!p.author || p.author.isDisabled) return false;
         const isMe = p.author._id.toString() === req.user.id;
-        return isMe || !p.author.isPrivate;
+        // Matrix Discovery Protocol: If a post is explicitly public, anyone can see it.
+        // If it's not public, only show if it's Me OR the author is NOT private.
+        return p.isPublic || isMe || !p.author.isPrivate;
       })
       .map(post => {
         let score = 0;
