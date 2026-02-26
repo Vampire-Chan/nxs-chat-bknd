@@ -14,6 +14,16 @@ const User = require('./models/User');
 const app = express();
 const server = http.createServer(app);
 
+// HELP DIAGNOSE RENDER FAILURES
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('💥 [CRITICAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('💥 [CRITICAL] Uncaught Exception:', err);
+  process.exit(1);
+});
+
 // Logger Middleware
 app.use((req, res, next) => {
   console.log(`📡 [${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);

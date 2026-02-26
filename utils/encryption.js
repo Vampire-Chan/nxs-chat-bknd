@@ -4,11 +4,15 @@ const ALGORITHM = 'aes-256-cbc';
 const IV_LENGTH = 16;
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
 
+let key;
 if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length !== 64) {
-  throw new Error('Invalid ENCRYPTION_KEY. Must be a 64-character hex string (32 bytes).');
+  console.warn('⚠️  [CRITICAL] ENCRYPTION_KEY is missing or invalid. Encryption protocols will fail.');
+  // Generate a temporary key so the app doesn't crash during build/dry-run, 
+  // but real data will be inaccessible until configured in Render.
+  key = crypto.randomBytes(32); 
+} else {
+  key = Buffer.from(ENCRYPTION_KEY, 'hex');
 }
-
-const key = Buffer.from(ENCRYPTION_KEY, 'hex');
 
 function encrypt(text) {
   if (text === null || typeof text === 'undefined') return null;
