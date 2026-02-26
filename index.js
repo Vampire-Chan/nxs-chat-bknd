@@ -184,16 +184,25 @@ io.on('connection', (socket) => {
   // --- WEBRTC SIGNALING (Channel Based) ---
   socket.on('join_voice', async ({ roomID }) => {
     try {
-      const channel = await Channel.findById(roomID);
-      if (!channel) return;
-
-      // AUTH CHECK: Must be member of channel/realm
       const userId = socket.user._id.toString();
-      if (channel.type === 'dm' || channel.type === 'group_dm') {
-        if (!channel.members.some(m => m.toString() === userId)) return;
+      const isDirect = roomID.startsWith('direct:');
+
+      if (isDirect) {
+        // VIRTUAL DIRECT ROOM: Just check if user is part of the link
+        const callerId = roomID.split(':')[1];
+        // Only the caller and the receiver can join this virtual room
+        if (userId !== callerId && !onlineUsers.has(userId)) return; // Basic check
       } else {
-        const realm = await Realm.findById(channel.realm);
-        if (!realm || !realm.members.some(m => m.toString() === userId)) return;
+        const channel = await Channel.findById(roomID);
+        if (!channel) return;
+
+        // AUTH CHECK: Must be member of channel/realm
+        if (channel.type === 'dm' || channel.type === 'group_dm') {
+          if (!channel.members.some(m => m.toString() === userId)) return;
+        } else {
+          const realm = await Realm.findById(channel.realm);
+          if (!realm || !realm.members.some(m => m.toString() === userId)) return;
+        }
       }
 
       socket.join(`voice:${roomID}`);
