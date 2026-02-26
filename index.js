@@ -316,10 +316,11 @@ io.on('connection', (socket) => {
   socket.on('accept_call', ({ channelId }) => {
     const call = pendingCalls[channelId];
     if (call) {
-      // Notify the original caller that someone has accepted
-      io.to(call.callerId).emit('caller_ready', { channelId });
+      // Notify the original caller that the recipient has accepted and is ready to establish P2P
+      io.to(call.callerId).emit('caller_ready', { channelId, acceptedBy: socket.user._id });
       
-      // Clean up the pending call
+      // Also notify all other recipients that the call is now active/answered elsewhere if needed
+      // For now, we just clean up the pending call
       delete pendingCalls[channelId];
     }
   });
