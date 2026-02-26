@@ -59,7 +59,8 @@ app.use(express.urlencoded({ limit: '50mb', extended: true })); // Keep higher f
 // Rate Limiting
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100,
+  max: 500, // Relaxed for real-time sync
+  message: { message: "Transmissions too frequent. Stabilize pulse." },
   standardHeaders: true,
   legacyHeaders: false,
 });
