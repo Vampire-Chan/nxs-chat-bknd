@@ -2,9 +2,13 @@ const router = require('express').Router();
 const User = require('../models/User');
 const Notification = require('../models/Notification');
 const auth = require('../middleware/auth');
+const otplib = require('otplib');
+const qrcode = require('qrcode');
 const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
+const crypto = require('crypto');
+
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -183,28 +187,33 @@ router.post('/vani/sync/:id/accept', auth, async (req, res) => {
 // PROFILE UPDATE
 router.put('/me', auth, identityUpload, async (req, res) => {
   try {
-    const { bio, status, customStatus, isPrivate, showAge, displayName, dob } = req.body;
+    const { bio, status, customStatus, isPrivate, showAge, displayName, dob, gender } = req.body;
     const currentUser = await User.findById(req.user.id);
     const updateData = {};
 
     if (displayName !== undefined) updateData.displayName = displayName.substring(0, 32);
     
+    // GENDER LOCK PROTOCOL: Only allow setting if currently 'none'
+    if (gender && (!currentUser.gender || currentUser.gender === 'none')) {
+      updateData.gender = gender;
+    }
+
     // DOB Lock Protocol: Only allow setting if currently null
     if (dob && !currentUser.dob) {
       updateData.dob = new Date(dob);
     }
 
     if (showAge !== undefined) updateData.showAge = showAge === 'true' || showAge === true;
+    if (showGender !== undefined) updateData.showGender = showGender === 'true' || showGender === true;
 
     if (bio !== undefined) updateData.bio = bio.substring(0, 300);
     if (status) updateData.status = status;
     if (customStatus !== undefined) updateData.customStatus = customStatus;
 
-    if (req.body.recoveryKeys) {
-      try {
-        updateData.recoveryKeys = JSON.parse(req.body.recoveryKeys);
-      } catch (e) { console.error("Recovery keys parse error"); }
-    }
+    // SECURITY: Recovery keys and Admin status MUST NOT be updatable via general profile update
+    delete req.body.recoveryKeys;
+    delete req.body.isAdmin;
+    delete req.body.badges;
     
     if (isPrivate !== undefined) {
       const newPrivateStatus = isPrivate === 'true' || isPrivate === true;
@@ -448,11 +457,44 @@ router.get('/handle/:username', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// RESET TOTP SECRET
+router.post('/me/security/totp/reset', auth, async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      return res.status(400).json({ message: "Current TOTP token is required." });
+    }
+
+    const user = await User.findById(req.user.id);
+    const decryptedSecret = decrypt(user.totpSecret);
+
+    const isValid = otplib.verify({ token, secret: decryptedSecret });
+    if (!isValid) {
+      return res.status(401).json({ message: "Invalid TOTP token." });
+    }
+
+    // Current token is valid, proceed to generate a new secret
+    const newSecret = otplib.generateSecret();
+    user.totpSecret = newSecret; // It will be encrypted by the pre-save hook
+    await user.save();
+    
+    const issuer = 'Yantravani';
+    const label = `${issuer}:${user.username}`;
+    const otpauth = `otpauth://totp/${encodeURIComponent(label)}?secret=${newSecret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
+    const qrImageUrl = await qrcode.toDataURL(otpauth);
+    
+    res.json({ secret: newSecret, qrCode: qrImageUrl });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.post('/me/security/keys', auth, async (req, res) => {
   try {
-    const keys = Array.from({ length: 10 }, () => ({ code: Math.random().toString(36).substring(2, 8).toUpperCase() + '-' + Math.random().toString(36).substring(2, 8).toUpperCase(), isUsed: false }));
-    const user = await User.findByIdAndUpdate(req.user.id, { $set: { recoveryKeys: keys } }, { new: true });
-    res.json({ keys: user.recoveryKeys });
+    const keys = Array.from({ length: 10 }, () => ({
+      code: crypto.randomBytes(8).toString('hex').substring(0, 12).toUpperCase(),
+      isUsed: false
+    }));
+    await User.findByIdAndUpdate(req.user.id, { $set: { recoveryKeys: keys } });
+    res.json({ keys });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

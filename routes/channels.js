@@ -5,6 +5,41 @@ const ScheduledMessage = require('../models/ScheduledMessage');
 const Post = require('../models/Post');
 const Notification = require('../models/Notification');
 const auth = require('../middleware/auth');
+const Realm = require('../models/Realm');
+
+// Middleware to authorize if a user can access a channel's content
+const authorizeChannelAccess = async (req, res, next) => {
+  try {
+    const channel = await Channel.findById(req.params.id);
+    if (!channel) return res.status(404).json({ message: "Node lost" });
+
+    // For DM channels, check if user is a member
+    if (channel.type === 'dm' || channel.type === 'group_dm') {
+      if (!channel.members.includes(req.user.id)) {
+        return res.status(403).json({ message: "Access Denied" });
+      }
+    } 
+    // For realm channels, check if user is a member of the parent realm
+    else if (channel.realm) {
+      const realm = await Realm.findById(channel.realm);
+      if (!realm || !realm.members.includes(req.user.id)) {
+        return res.status(403).json({ message: "Access Denied" });
+      }
+    } 
+    // Default deny for channels without a realm that aren't DMs
+    else {
+      return res.status(403).json({ message: "Access Denied" });
+    }
+    
+    // Store channel on request to avoid re-fetching
+    req.channel = channel;
+    next();
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 
 // 1. EDIT MESSAGE
 router.put('/messages/:id', auth, async (req, res) => {
@@ -80,19 +115,19 @@ router.post('/:id/unread', auth, async (req, res) => {
 });
 
 // 5. GET MESSAGES (Auto-marks as read)
-router.get('/:id/messages', auth, async (req, res) => {
+router.get('/:id/messages', auth, authorizeChannelAccess, async (req, res) => {
   try {
-    const channelId = req.params.id;
-    const userId = req.user.id;
-    const channel = await Channel.findById(channelId);
-    if (channel) {
-      if (!channel.lastSeen) channel.lastSeen = {};
-      channel.lastSeen[userId] = new Date();
-      channel.markModified('lastSeen');
-      await channel.save();
+    const { channel, user } = req;
+    const channelId = channel._id;
+    const userId = user.id;
+    
+    if (!channel.lastSeen) channel.lastSeen = {};
+    channel.lastSeen[userId] = new Date();
+    channel.markModified('lastSeen');
+    await channel.save();
 
-      await Notification.updateMany({ recipient: userId, 'metadata.channelId': channelId, isRead: false }, { $set: { isRead: true } });
-    }
+    await Notification.updateMany({ recipient: userId, 'metadata.channelId': channelId, isRead: false }, { $set: { isRead: true } });
+    
     const messages = await Message.find({ channel: channelId })
       .populate('sender', 'username avatar badges tier isAdmin')
       .sort({ timestamp: 1 });
@@ -101,7 +136,7 @@ router.get('/:id/messages', auth, async (req, res) => {
 });
 
 // 6. GET POSTS (For Feed/Reels Channels)
-router.get('/:id/posts', auth, async (req, res) => {
+router.get('/:id/posts', auth, authorizeChannelAccess, async (req, res) => {
   try {
     const posts = await Post.find({ channel: req.params.id })
       .populate('author', 'username avatar displayName showAge dob isPrivate')

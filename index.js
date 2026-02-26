@@ -3,6 +3,8 @@ const express = require('express');
 const http = require('http');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { Server } = require('socket.io');
 const Message = require('./models/Message');
 const Channel = require('./models/Channel');
@@ -19,24 +21,44 @@ app.use((req, res, next) => {
 });
 
 // Middleware
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+const corsOptions = {
+  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions));
+app.use(helmet());
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true })); // Keep higher for file uploads
+
+// Rate Limiting
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // Limit auth attempts
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // Health Check
 app.get('/api/health', (req, res) => res.json({ status: 'VANI_ONLINE', timestamp: new Date() }));
 
 // Routes
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/dms', require('./routes/dms'));
-app.use('/api/users', require('./routes/users'));
-app.use('/api/realms', require('./routes/realms'));
-app.use('/api/channels', require('./routes/channels'));
-app.use('/api/posts', require('./routes/posts'));
-app.use('/api/media', require('./routes/media'));
-app.use('/api/search', require('./routes/search'));
-app.use('/api/admin', require('./routes/admin'));
-app.use('/api/payments', require('./routes/payments'));
+app.use('/api/auth', authLimiter, require('./routes/auth'));
+app.use('/api/dms', apiLimiter, require('./routes/dms'));
+app.use('/api/users', apiLimiter, require('./routes/users'));
+app.use('/api/realms', apiLimiter, require('./routes/realms'));
+app.use('/api/channels', apiLimiter, require('./routes/channels'));
+app.use('/api/posts', apiLimiter, require('./routes/posts'));
+app.use('/api/media', apiLimiter, require('./routes/media')); // Consider a separate limit for uploads
+app.use('/api/search', apiLimiter, require('./routes/search'));
+app.use('/api/admin', apiLimiter, require('./routes/admin'));
+app.use('/api/payments', apiLimiter, require('./routes/payments'));
 
 // Database
 mongoose.connect(process.env.MONGO_URI)
@@ -47,22 +69,25 @@ const jwt = require('jsonwebtoken');
 
 // Socket.IO
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
+  cors: corsOptions
 });
 
 app.set('socketio', io);
 
 // Authentication Middleware for Socket.IO
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   const token = socket.handshake.auth.token || socket.handshake.query.token;
   if (!token) return next(new Error("Authentication error"));
   
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    socket.user = decoded;
+    const user = await User.findById(decoded.id).lean();
+
+    if (!user || user.isDisabled) {
+      return next(new Error("Authentication error"));
+    }
+
+    socket.user = { ...decoded, ...user };
     next();
   } catch (err) {
     next(new Error("Authentication error"));
@@ -72,6 +97,7 @@ io.use((socket, next) => {
 // Track Online Users & Voice Rooms
 const onlineUsers = new Map(); 
 const voiceRooms = {}; // { roomID: [{ socketId, user }, ...] }
+const lastMessageTimestamp = new Map(); // Rate limiting map for sockets
 
 io.on('connection', (socket) => {
   const userId = (socket.user.id || socket.user._id)?.toString();
@@ -88,41 +114,59 @@ io.on('connection', (socket) => {
   }
 
   // --- WEBRTC SIGNALING ---
-  socket.on('join_voice', ({ roomID, user }) => {
-    const userData = { socketId: socket.id, user };
-    if (voiceRooms[roomID]) {
-      // IDEMPOTENCY CHECK: Don't add same socket twice
-      if (voiceRooms[roomID].some(u => u.socketId === socket.id)) return;
+  socket.on('join_voice', async ({ roomID }) => {
+    try {
+      const channel = await Channel.findById(roomID);
+      if (!channel) return;
 
-      if (voiceRooms[roomID].length >= 12) { // Increased for server capacity
-        socket.emit('room_full');
-        return;
+      // AUTH CHECK: Must be member of channel/realm
+      const userId = socket.user._id.toString();
+      if (channel.type === 'dm' || channel.type === 'group_dm') {
+        if (!channel.members.some(m => m.toString() === userId)) return;
+      } else {
+        const realm = await Realm.findById(channel.realm);
+        if (!realm || !realm.members.some(m => m.toString() === userId)) return;
       }
-      voiceRooms[roomID].push(userData);
-    } else {
-      voiceRooms[roomID] = [userData];
-    }
-    
-    socket.join(`voice:${roomID}`);
-    const otherUsers = voiceRooms[roomID].filter(u => u.socketId !== socket.id);
-    socket.emit('all_users', otherUsers);
+
+      socket.join(`voice:${roomID}`);
+      if (!voiceRooms[roomID]) voiceRooms[roomID] = [];
+      
+      const userPayload = { 
+        socketId: socket.id, 
+        user: { 
+          id: userId, 
+          username: socket.user.username, 
+          avatar: socket.user.avatar,
+          gender: socket.user.gender,
+          showGender: socket.user.showGender
+        } 
+      };
+      
+      voiceRooms[roomID].push(userPayload);
+      const otherUsers = voiceRooms[roomID].filter(u => u.socketId !== socket.id);
+      socket.emit('all_users', otherUsers);
+      console.log(`🎙️ User ${socket.user.username} joined voice room ${roomID}`);
+    } catch (e) { console.error("join_voice error:", e); }
   });
 
-  socket.on('sending_signal', payload => {
-    // payload: { userToSignal (socketId), callerID (socketId), signal, user (callerProfile) }
-    io.to(payload.userToSignal).emit('user_joined', { 
-      signal: payload.signal, 
-      callerID: payload.callerID,
-      user: payload.user 
-    });
+  socket.on('sending_signal', (payload) => {
+    // SECURE: Override sender info with authenticated socket user
+    const securePayload = {
+      signal: payload.signal,
+      callerID: socket.id,
+      user: { 
+        id: socket.user._id, 
+        username: socket.user.username, 
+        avatar: socket.user.avatar,
+        gender: socket.user.gender,
+        showGender: socket.user.showGender
+      }
+    };
+    io.to(payload.userToSignal).emit('user_joined', securePayload);
   });
 
-  socket.on('returning_signal', payload => {
-    // payload: { signal, callerID (initiatorSocketId) }
-    io.to(payload.callerID).emit('receiving_returned_signal', { 
-      signal: payload.signal, 
-      id: socket.id 
-    });
+  socket.on('returning_signal', (payload) => {
+    io.to(payload.callerID).emit('receiving_returned_signal', { signal: payload.signal, id: socket.id });
   });
 
   socket.on('leave_voice', ({ channelId }) => {
@@ -131,12 +175,7 @@ io.on('connection', (socket) => {
       if (voiceRooms[channelId].length === 0) delete voiceRooms[channelId];
     }
     socket.leave(`voice:${channelId}`);
-    socket.to(`voice:${channelId}`).emit('user_left_voice', socket.id);
-  });
-
-  socket.on('reject_call', ({ channelId, senderId }) => {
-    // senderId here is actually the User ID of the caller
-    io.to(senderId).emit('call_rejected', { channelId });
+    io.to(`voice:${channelId}`).emit('user_left_voice', socket.id);
   });
 
   // --- STANDARD CHAT LOGIC ---
@@ -149,6 +188,14 @@ io.on('connection', (socket) => {
   });
 
   socket.on('send_message', async (data) => {
+    // Socket Rate Limiting: Max 3 messages per second
+    const now = Date.now();
+    const lastMsg = lastMessageTimestamp.get(userId) || 0;
+    if (now - lastMsg < 333) {
+      return socket.emit('rate_limit_exceeded', { message: "Transmissions too frequent. Stabilize pulse." });
+    }
+    lastMessageTimestamp.set(userId, now);
+
     console.log(`💬 Message from ${userId} for channel ${data.channelId}`);
     try {
       const channel = await Channel.findById(data.channelId);
@@ -208,6 +255,8 @@ io.on('connection', (socket) => {
     }
   });
 
+  const pendingCalls = {}; // { channelId: { callerId, recipients: [userId] } }
+
   socket.on('initiate_call', async (data) => {
     const { channelId, type, senderId, senderName, senderAvatar } = data;
     console.log(`📞 Call Init: ${type} from ${senderId} in ${channelId}`);
@@ -217,29 +266,35 @@ io.on('connection', (socket) => {
       if (!channel) return;
 
       const recipients = channel.members.filter(m => m.toString() !== senderId);
-      const Notification = require('./models/Notification');
+      pendingCalls[channelId] = { callerId: senderId, recipients: recipients.map(r => r.toString()) };
 
-      for (const recipientId of recipients) {
-        // Emit real-time popup event
-        io.to(recipientId.toString()).emit('incoming_call', {
-          channelId,
-          type,
-          sender: { id: senderId, username: senderName, avatar: senderAvatar }
-        });
+      const payload = {
+        channelId,
+        type,
+        sender: { id: senderId, username: senderName, avatar: senderAvatar },
+        timestamp: Date.now()
+      };
+      
+      recipients.forEach(recipientId => {
+        io.to(recipientId.toString()).emit('incoming_call', payload);
+      });
 
-        // Also create a persistent system notification for history/offline visibility
-        await new Notification({
-          recipient: recipientId,
-          sender: senderId,
-          type: 'system',
-          content: `initiated a ${type} call with you.`,
-          metadata: { channelId }
-        }).save();
-        
-        io.to(recipientId.toString()).emit('identity_sync_update');
-      }
+      // Also notify the caller that the call has been initiated and is ringing for others.
+      io.to(senderId).emit('call_initiated', { channelId, recipients });
+
     } catch (err) {
       console.error("Socket initiate_call error:", err);
+    }
+  });
+
+  socket.on('accept_call', ({ channelId }) => {
+    const call = pendingCalls[channelId];
+    if (call) {
+      // Notify the original caller that someone has accepted
+      io.to(call.callerId).emit('caller_ready', { channelId });
+      
+      // Clean up the pending call
+      delete pendingCalls[channelId];
     }
   });
 

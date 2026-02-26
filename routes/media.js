@@ -5,6 +5,7 @@ const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
 const Message = require('../models/Message');
 const Channel = require('../models/Channel');
+const User = require('../models/User');
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -20,10 +21,49 @@ const storage = new CloudinaryStorage({
   }
 });
 
-const upload = multer({ storage: storage });
+// Configure Multer with a high hard limit, but we'll use middleware for tiered limits
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 2 * 1024 * 1024 * 1024 } // 2GB Max Hard Limit
+});
+
+// Tiered Upload Limit Middleware
+const validateUploadLimit = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user.id);
+    const channel = await Channel.findById(req.body.channelId);
+    
+    if (!user || !channel) return res.status(404).json({ message: "Context lost." });
+
+    const isElite = user.tier === 'elite' || user.isAdmin;
+    const isDM = channel.type === 'dm' || channel.type === 'group_dm';
+    
+    // Limits in Bytes
+    const STANDARD_LIMIT = 100 * 1024 * 1024; // 100MB
+    const ELITE_LIMIT = 1 * 1024 * 1024 * 1024; // 1GB
+    const DM_LIMIT = 2 * 1024 * 1024 * 1024; // 2GB
+
+    let currentLimit = STANDARD_LIMIT;
+    if (isDM) currentLimit = DM_LIMIT;
+    else if (isElite) currentLimit = ELITE_LIMIT;
+
+    const contentLength = parseInt(req.headers['content-length'] || '0');
+    
+    if (contentLength > currentLimit) {
+      return res.status(413).json({ 
+        message: `Transmission overflow. Current limit: ${currentLimit / (1024 * 1024)}MB.`,
+        required_tier: isDM ? "None (Max reached)" : "Elite"
+      });
+    }
+
+    next();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 
 // UPLOAD MEDIA & CREATE MESSAGE
-router.post('/upload', auth, upload.single('file'), async (req, res) => {
+router.post('/upload', auth, validateUploadLimit, upload.single('file'), async (req, res) => {
   try {
     const { channelId, content, mediaType } = req.body;
     if (!req.file) return res.status(400).json({ message: "No media detected." });

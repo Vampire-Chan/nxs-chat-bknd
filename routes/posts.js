@@ -21,10 +21,29 @@ const storage = new CloudinaryStorage({
   params: { folder: 'nexus-posts', resource_type: 'auto' }
 });
 
-const upload = multer({ storage: storage });
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 1024 * 1024 * 1024 } // 1GB Max for Posts
+});
+
+const validatePostLimit = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "Identity lost." });
+
+    const isElite = user.tier === 'elite' || user.isAdmin;
+    const limit = isElite ? 1024 * 1024 * 1024 : 100 * 1024 * 1024;
+
+    const contentLength = parseInt(req.headers['content-length'] || '0');
+    if (contentLength > limit) {
+      return res.status(413).json({ message: `Post too heavy. Limit: ${limit / (1024 * 1024)}MB.` });
+    }
+    next();
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
 
 // CREATE
-router.post('/', auth, upload.single('file'), async (req, res) => {
+router.post('/', auth, validatePostLimit, upload.single('file'), async (req, res) => {
   console.log('📤 POST Request to /api/posts');
   console.log('📦 Body:', req.body);
   console.log('📎 File:', req.file ? req.file.path : 'MISSING');
@@ -129,14 +148,18 @@ router.delete('/:id', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET ALL (Global Matrix - Public Only with Resonance Algorithm)
+// GET ALL (Global Matrix - Public Only with MMFR 2.0 Algorithm)
 router.get('/all', auth, async (req, res) => {
   try {
-    const { tag } = req.query;
+    const { tag, page = 1 } = req.query;
+    const limit = 50;
+    const skip = (page - 1) * limit;
+
     const User = require('../models/User');
     const currentUser = await User.findById(req.user.id);
     
-    const query = { 
+    // BASE QUERY: Public posts only
+    const baseQuery = { 
       $or: [
         { isPublic: true },
         { channel: { $exists: false } },
@@ -145,21 +168,37 @@ router.get('/all', auth, async (req, res) => {
     };
 
     if (tag) {
-      query.tags = { $in: [tag] };
+      baseQuery.tags = { $in: [tag] };
     }
 
-    // Fetch potential posts
-    const posts = await Post.find(query)
-      .populate('author', 'username avatar displayName isPrivate isDisabled')
-      .populate('sourceRealm', 'name icon isDiscoverable')
-      .populate('comments.user', 'username avatar displayName isPrivate')
-      .sort({ createdAt: -1 })
-      .limit(200);
+    // 1. Fetch Fresh Matrix (Last 7 days)
+    const freshPosts = await Post.find({
+      ...baseQuery,
+      createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
+    })
+    .populate('author', 'username avatar displayName isPrivate isDisabled')
+    .populate('sourceRealm', 'name icon isDiscoverable')
+    .populate('comments.user', 'username avatar displayName isPrivate')
+    .sort({ createdAt: -1 })
+    .limit(150);
+
+    // 2. Fetch "Echoes" (Grave Digging: > 15 days old, high engagement)
+    const echoes = await Post.find({
+      ...baseQuery,
+      createdAt: { $lt: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000) },
+      $expr: { $gt: [{ $size: "$likes" }, 5] } // Only dig up liked content
+    })
+    .populate('author', 'username avatar displayName isPrivate isDisabled')
+    .populate('sourceRealm', 'name icon isDiscoverable')
+    .sort({ 'likes.length': -1 })
+    .limit(20);
 
     const now = new Date();
+    const authorCounts = {}; // For Diversity Logic
 
-    // The Resonance Synthesizer
-    const scoredPosts = posts
+    const allCandidatePosts = [...freshPosts, ...echoes];
+
+    const scoredPosts = allCandidatePosts
       .filter(p => {
         if (!p.author || p.author.isDisabled) return false;
         const isMe = p.author._id.toString() === req.user.id;
@@ -167,43 +206,74 @@ router.get('/all', auth, async (req, res) => {
       })
       .map(post => {
         let score = 0;
-        const hoursOld = (now - new Date(post.createdAt)) / (1000 * 60 * 60);
+        const ageInHours = (now - new Date(post.createdAt)) / (1000 * 60 * 60);
+        const isEcho = ageInHours > (15 * 24);
 
-        // 1. NETWORK GRAVITY (Weight: 40)
-        // Check if nodes I follow have liked this
+        // A. GRAVITY (Social Engagement)
         const followedLikes = post.likes.filter(id => 
           currentUser.following.includes(id) || currentUser.friends.includes(id)
         ).length;
-        score += (followedLikes * 15);
+        
+        const rawEngagement = post.likes.length + (post.comments.length * 2);
+        score += (followedLikes * 20); // Massive weight for social circle
+        score += (rawEngagement * 2);
 
-        // 2. CATEGORY RESONANCE (Weight: 40)
-        // Combine AI detected sectors and manual tags
-        const resonancePool = [...(post.detectedSectors || []), ...(post.tags || [])];
-        resonancePool.forEach(tag => {
-          const resonanceValue = currentUser.frequencyMap?.get(tag.toLowerCase()) || 0;
-          score += (resonanceValue * 2); // Each point of interest adds to score
+        // B. VELOCITY (Recent Spark)
+        // If post is new (< 24h), calculate how fast it's growing
+        const velocity = ageInHours < 24 ? (rawEngagement / (ageInHours + 0.5)) : 0;
+        score += (velocity * 10);
+
+        // C. NEURAL RESONANCE (Interest Alignment)
+        const postSectors = post.detectedSectors || [];
+        const postTags = post.tags || [];
+        const resonancePool = [...postSectors, ...postTags];
+        
+        let resonanceScore = 0;
+        let isHighFriction = postSectors.includes('politics');
+        let userHasInterestInFriction = false;
+
+        resonancePool.forEach(term => {
+          const interest = currentUser.frequencyMap?.get(term.toLowerCase()) || 0;
+          resonanceScore += (interest * 3);
+          if (isHighFriction && term.toLowerCase() === 'politics' && interest > 5) {
+            userHasInterestInFriction = true;
+          }
         });
 
-        // 3. TEMPORAL DECAY (The Pulse)
-        // We divide the score by hours passed (Gravity effect)
-        // Fresh posts (0-1h) keep full score, older ones fade
-        const decayFactor = Math.pow(hoursOld + 2, 1.5); 
-        const finalScore = score / decayFactor;
+        // SAFETY: The "Cartoon vs Politics" Filter
+        if (isHighFriction && !userHasInterestInFriction) {
+          score -= 500; // Bury it deep
+        }
+        score += resonanceScore;
 
-        // Add a small "Discovery" boost for brand new posts to let them enter the matrix
-        const discoveryBoost = hoursOld < 1 ? 5 : 0;
+        // D. DIVERSITY (Anti-Flood)
+        const authorId = post.author._id.toString();
+        authorCounts[authorId] = (authorCounts[authorId] || 0) + 1;
+        const diversityPenalty = Math.max(0, (authorCounts[authorId] - 2) * 15);
+        score -= diversityPenalty;
+
+        // E. TEMPORAL DECAY (The Pulse)
+        // Echoes get a "Resurrection Boost" to overcome their age
+        const decayPower = isEcho ? 0.8 : 1.8; 
+        const echoBoost = isEcho ? 50 : 0;
+        
+        const finalScore = (score + echoBoost) / Math.pow(ageInHours + 2, decayPower);
 
         return { 
           ...post.toObject(), 
-          resonanceScore: finalScore + discoveryBoost,
-          debug: { gravity: followedLikes, resonance: score, age: hoursOld }
+          resonanceScore: finalScore,
+          isEcho: isEcho,
+          debug: { velocity, resonance: resonanceScore, diversity: diversityPenalty }
         };
       });
 
-    // Sort by final Resonance Score
+    // Sort by final MMFR Score
     const sorted = scoredPosts.sort((a, b) => b.resonanceScore - a.resonanceScore);
+    
+    // Apply Pagination
+    const paginated = sorted.slice(skip, skip + limit);
       
-    res.json(sorted);
+    res.json(paginated);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

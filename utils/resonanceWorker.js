@@ -23,7 +23,39 @@ const startResonanceWorker = () => {
 
 const syncMatrix = async () => {
   await processPendingTransmissions();
+  await applyNeuralEntropy();
   await purgeInactiveNodes();
+};
+
+const applyNeuralEntropy = async () => {
+  console.log("🌀 [Resonance_Worker] Applying Neural Entropy (Cooling user interests)...");
+  try {
+    const users = await User.find({ frequencyMap: { $exists: true, $ne: {} } });
+    const entropyFactor = 0.95; // Lose 5% of interest every 6 hours
+
+    const updates = users.map(async (user) => {
+      let changed = false;
+      for (let [key, value] of user.frequencyMap) {
+        const newValue = value * entropyFactor;
+        if (newValue < 0.5) {
+          user.frequencyMap.delete(key);
+          changed = true;
+        } else {
+          user.frequencyMap.set(key, newValue);
+          changed = true;
+        }
+      }
+      if (changed) {
+        user.markModified('frequencyMap');
+        return user.save();
+      }
+    });
+
+    await Promise.all(updates);
+    console.log(`   ❄️  Cooled interests for ${users.length} active nodes.`);
+  } catch (e) {
+    console.error("❌ [Resonance_Worker] Entropy failed:", e);
+  }
 };
 
 const purgeInactiveNodes = async () => {

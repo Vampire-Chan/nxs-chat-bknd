@@ -8,6 +8,9 @@ const auth = require('../middleware/auth');
 const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
+const { decrypt } = require('../utils/encryption');
+const crypto = require('crypto');
+
 
 // Config Cloudinary for Setup
 const storage = new CloudinaryStorage({
@@ -33,7 +36,7 @@ const getDeviceInfo = (req) => {
 // 1. REGISTER
 router.post('/register', async (req, res) => {
   try {
-    const { username, displayName, dob } = req.body;
+    const { username, displayName, dob, gender } = req.body;
     const existingUser = await User.findOne({ username });
     if (existingUser) return res.status(400).json({ message: "Username already taken" });
 
@@ -41,7 +44,8 @@ router.post('/register', async (req, res) => {
     const newUser = new User({ 
       username, 
       displayName: displayName || username, 
-      dob, 
+      dob,
+      gender: gender || 'none',
       totpSecret: secret, 
       isVerified: false,
       isPrivate: true // Explicitly private by default
@@ -71,7 +75,8 @@ router.post('/verify-registration', async (req, res) => {
     if (!user) return res.status(404).json({ message: "User not found" });
     if (user.isVerified) return res.status(400).json({ message: "User already verified" });
 
-    const isValid = await otplib.verify({ token, secret: user.totpSecret });
+    const decryptedSecret = decrypt(user.totpSecret);
+    const isValid = await otplib.verify({ token, secret: decryptedSecret });
     if (!isValid) return res.status(400).json({ message: "Invalid Code" });
 
     user.isVerified = true;
@@ -102,9 +107,10 @@ router.post('/verify-registration', async (req, res) => {
 // 3. PROFILE SETUP (Final Step)
 router.post('/setup', auth, upload.single('avatar'), async (req, res) => {
   try {
-    const { bio } = req.body;
+    const { bio, gender } = req.body;
     const updateData = { isSetupComplete: true };
     if (bio) updateData.bio = bio;
+    if (gender) updateData.gender = gender;
     if (req.file) updateData.avatar = req.file.path;
 
     const user = await User.findByIdAndUpdate(req.user.id, { $set: updateData }, { new: true }).select('-totpSecret');
@@ -122,11 +128,16 @@ router.post('/login', async (req, res) => {
     if (!user) return res.status(404).json({ message: "User not found" });
     if (!user.isVerified) return res.status(403).json({ message: "Account setup not complete." });
 
-    const isValid = await otplib.verify({ token, secret: user.totpSecret });
+    const decryptedSecret = decrypt(user.totpSecret);
+    const isValid = await otplib.verify({ token, secret: decryptedSecret });
     
     let isRecovery = false;
     if (!isValid && user.recoveryKeys && user.recoveryKeys.length > 0) {
-      const keyIndex = user.recoveryKeys.findIndex(k => k.code === token && !k.isUsed);
+      const keyIndex = user.recoveryKeys.findIndex(k => {
+        const decryptedCode = decrypt(k.code);
+        return decryptedCode === token && !k.isUsed;
+      });
+
       if (keyIndex !== -1) {
         user.recoveryKeys[keyIndex].isUsed = true;
         user.markModified('recoveryKeys');

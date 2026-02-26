@@ -22,4 +22,12 @@ router.post('/submit', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET TRANSACTION HISTORY
+router.get('/me', auth, async (req, res) => {
+  try {
+    const txs = await Transaction.find({ user: req.user.id }).sort({ createdAt: -1 });
+    res.json(txs);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;

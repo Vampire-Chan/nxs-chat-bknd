@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const mongoose = require('mongoose');
 const Realm = require('../models/Realm');
 const User = require('../models/User');
 const Channel = require('../models/Channel');
@@ -79,6 +80,14 @@ router.post('/', auth, async (req, res) => {
 router.get('/:id', auth, async (req, res) => {
   try {
     const realm = await Realm.findById(req.params.id).populate('channels members').populate('roles');
+    if (!realm) return res.status(404).json({ message: "Node lost" });
+
+    // IDOR Fix: Ensure user is a member of the realm to view it
+    const isMember = realm.members.some(member => member._id.toString() === req.user.id);
+    if (!isMember) {
+      return res.status(403).json({ message: "Access denied." });
+    }
+
     res.json(realm);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

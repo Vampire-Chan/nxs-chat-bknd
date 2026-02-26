@@ -1,9 +1,11 @@
 const mongoose = require('mongoose');
+const { encrypt, decrypt } = require('../utils/encryption');
 
 const UserSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   displayName: { type: String, default: "" },
   dob: { type: Date },
+  gender: { type: String, enum: ['male', 'female', 'other', 'none'], default: 'none' },
   totpSecret: { type: String, required: true },
   isVerified: { type: Boolean, default: false },
   isSetupComplete: { type: Boolean, default: false },
@@ -25,6 +27,7 @@ const UserSchema = new mongoose.Schema({
   status: { type: String, enum: ['online', 'idle', 'dnd', 'offline'], default: 'online' },
   isPrivate: { type: Boolean, default: true },
   showAge: { type: Boolean, default: false },
+  showGender: { type: Boolean, default: false },
   isDisabled: { type: Boolean, default: false },
   isShadowBanned: { type: Boolean, default: false },
   scheduledDeletion: { type: Date, default: null },
@@ -48,6 +51,22 @@ const UserSchema = new mongoose.Schema({
   },
   lastSeenAt: { type: Date, default: Date.now },
   createdAt: { type: Date, default: Date.now }
+});
+
+// Encrypt sensitive fields before saving
+UserSchema.pre('save', function(next) {
+  if (this.isModified('totpSecret')) {
+    this.totpSecret = encrypt(this.totpSecret);
+  }
+  if (this.isModified('recoveryKeys')) {
+    this.recoveryKeys.forEach(key => {
+      // Only encrypt if it's not already appearing encrypted
+      if (key.code && !key.code.includes(':')) {
+        key.code = encrypt(key.code);
+      }
+    });
+  }
+  next();
 });
 
 module.exports = mongoose.model('User', UserSchema);
