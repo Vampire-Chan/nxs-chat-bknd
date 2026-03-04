@@ -10,7 +10,8 @@ router.get('/', auth, async (req, res) => {
   if (!q && !author && !startDate) return res.json({ users: [], realms: [], posts: [] });
 
   try {
-    const regex = new RegExp(q, 'i');
+    const escapedQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escapedQ, 'i');
     const results = { users: [], realms: [], posts: [] };
 
     // 1. SEARCH USERS
@@ -54,11 +55,13 @@ router.get('/', auth, async (req, res) => {
       let queryExec = Post.find(postQuery).populate('author', 'username avatar').limit(20);
 
       // Sorting Logic
-      if (sortBy === 'likes') queryExec = queryExec.sort({ 'likes.length': -1 });
-      else if (sortBy === 'comments') queryExec = queryExec.sort({ 'comments.length': -1 });
-      else queryExec = queryExec.sort({ createdAt: -1 });
+      // Note: sort by array length requires post-query sorting
+      queryExec = queryExec.sort({ createdAt: -1 });
 
-      results.posts = await queryExec;
+      let posts = await queryExec;
+      if (sortBy === 'likes') posts.sort((a, b) => (b.likes?.length || 0) - (a.likes?.length || 0));
+      else if (sortBy === 'comments') posts.sort((a, b) => (b.comments?.length || 0) - (a.comments?.length || 0));
+      results.posts = posts;
     }
 
     res.json(results);

@@ -10,4 +10,7 @@ const ScheduledMessageSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
+// Performance index for polling worker
+ScheduledMessageSchema.index({ isProcessed: 1, scheduledFor: 1 });
+
 module.exports = mongoose.model('ScheduledMessage', ScheduledMessageSchema);

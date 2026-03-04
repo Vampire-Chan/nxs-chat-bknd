@@ -8,6 +8,7 @@ const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
 const crypto = require('crypto');
+const { decrypt } = require('../utils/encryption');
 
 
 cloudinary.config({
@@ -152,8 +153,8 @@ router.post('/vani/sync/:id/accept', auth, async (req, res) => {
     }
     
     // 1. Establish Mutual Friendship
-    if (!currentUser.friends.includes(req.params.id)) currentUser.friends.push(req.params.id);
-    if (!targetUser.friends.includes(req.user.id)) targetUser.friends.push(req.user.id);
+    if (!currentUser.friends.some(f => f.toString() === req.params.id)) currentUser.friends.push(req.params.id);
+    if (!targetUser.friends.some(f => f.toString() === req.user.id)) targetUser.friends.push(req.user.id);
     
     // 2. Cleanup: Remove any one-way syncs (followers/following) between these two
     currentUser.following = currentUser.following.filter(id => id.toString() !== req.params.id);
@@ -187,7 +188,7 @@ router.post('/vani/sync/:id/accept', auth, async (req, res) => {
 // PROFILE UPDATE
 router.put('/me', auth, identityUpload, async (req, res) => {
   try {
-    const { bio, status, customStatus, isPrivate, showAge, displayName, dob, gender } = req.body;
+    const { bio, status, customStatus, isPrivate, showAge, showGender, displayName, dob, gender } = req.body;
     const currentUser = await User.findById(req.user.id);
     const updateData = {};
 
@@ -195,20 +196,27 @@ router.put('/me', auth, identityUpload, async (req, res) => {
     
     // GENDER LOCK PROTOCOL: Only allow setting if currently 'none'
     if (gender && (!currentUser.gender || currentUser.gender === 'none')) {
-      updateData.gender = gender;
+      const validGenders = ['male', 'female', 'other', 'none'];
+      if (validGenders.includes(gender)) updateData.gender = gender;
     }
 
     // DOB Lock Protocol: Only allow setting if currently null
     if (dob && !currentUser.dob) {
-      updateData.dob = new Date(dob);
+      const parsedDob = new Date(dob);
+      if (!isNaN(parsedDob.getTime()) && parsedDob < new Date()) {
+        updateData.dob = parsedDob;
+      }
     }
 
     if (showAge !== undefined) updateData.showAge = showAge === 'true' || showAge === true;
     if (showGender !== undefined) updateData.showGender = showGender === 'true' || showGender === true;
 
     if (bio !== undefined) updateData.bio = bio.substring(0, 300);
-    if (status) updateData.status = status;
-    if (customStatus !== undefined) updateData.customStatus = customStatus;
+    if (status) {
+      const validStatuses = ['online', 'idle', 'dnd', 'offline'];
+      if (validStatuses.includes(status)) updateData.status = status;
+    }
+    if (customStatus !== undefined) updateData.customStatus = String(customStatus).substring(0, 128);
 
     // SECURITY: Recovery keys and Admin status MUST NOT be updatable via general profile update
     delete req.body.recoveryKeys;
@@ -224,7 +232,7 @@ router.put('/me', auth, identityUpload, async (req, res) => {
         // Action: Convert all mutual Syncs (Followers+Following) to Friends.
         // Non-mutuals are severed (Privacy protocol).
         
-        const mutuals = currentUser.followers.filter(f => currentUser.following.includes(f));
+        const mutuals = currentUser.followers.filter(f => currentUser.following.some(fo => fo.toString() === f.toString()));
         
         // 1. Add mutuals to friends
         updateData.friends = [...new Set([...currentUser.friends, ...mutuals])];
@@ -468,13 +476,13 @@ router.post('/me/security/totp/reset', auth, async (req, res) => {
     const user = await User.findById(req.user.id);
     const decryptedSecret = decrypt(user.totpSecret);
 
-    const isValid = otplib.verify({ token, secret: decryptedSecret });
+    const isValid = otplib.authenticator.check(token, decryptedSecret);
     if (!isValid) {
       return res.status(401).json({ message: "Invalid TOTP token." });
     }
 
     // Current token is valid, proceed to generate a new secret
-    const newSecret = otplib.generateSecret();
+    const newSecret = otplib.authenticator.generateSecret();
     user.totpSecret = newSecret; // It will be encrypted by the pre-save hook
     await user.save();
     
@@ -514,7 +522,5 @@ router.get('/:id', auth, async (req, res) => {
     res.json(userObj);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-module.exports = router;
 
 module.exports = router;

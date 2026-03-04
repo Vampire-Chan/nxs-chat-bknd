@@ -10,6 +10,9 @@ const MessageSchema = new mongoose.Schema({
   // REPLY PROTOCOL
   parentMessage: { type: mongoose.Schema.Types.ObjectId, ref: 'Message', default: null },
 
+  // EDIT TRACKING
+  editedAt: { type: Date, default: null },
+
   // NEURAL REACTIONS: { ':matrix:': [userId1, userId2] }
   reactions: {
     type: mongoose.Schema.Types.Mixed,
@@ -18,5 +21,9 @@ const MessageSchema = new mongoose.Schema({
   
   timestamp: { type: Date, default: Date.now }
 });
+
+// Performance indexes
+MessageSchema.index({ channel: 1, timestamp: -1 });
+MessageSchema.index({ sender: 1 });
 
 module.exports = mongoose.model('Message', MessageSchema);

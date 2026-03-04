@@ -24,4 +24,8 @@ const ChannelSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
+// Performance indexes
+ChannelSchema.index({ type: 1, members: 1 });
+ChannelSchema.index({ realm: 1 });
+
 module.exports = mongoose.model('Channel', ChannelSchema);

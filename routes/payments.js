@@ -7,6 +7,16 @@ router.post('/submit', auth, async (req, res) => {
   try {
     const { method, transactionId, amount } = req.body;
     
+    if (!method || !transactionId || !amount) {
+      return res.status(400).json({ message: "Method, transaction ID, and amount are required." });
+    }
+    if (typeof amount !== 'number' || amount <= 0) {
+      return res.status(400).json({ message: "Invalid amount." });
+    }
+    if (typeof transactionId !== 'string' || transactionId.length > 128) {
+      return res.status(400).json({ message: "Invalid transaction ID." });
+    }
+    
     const existing = await Transaction.findOne({ transactionId });
     if (existing) return res.status(400).json({ message: "Transaction ID already used." });
 

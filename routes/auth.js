@@ -37,14 +37,32 @@ const getDeviceInfo = (req) => {
 router.post('/register', async (req, res) => {
   try {
     const { username, displayName, dob, gender } = req.body;
-    const existingUser = await User.findOne({ username });
+    
+    // Username validation
+    if (!username || typeof username !== 'string') return res.status(400).json({ message: "Username is required." });
+    const trimmed = username.trim();
+    if (trimmed.length < 3 || trimmed.length > 24) return res.status(400).json({ message: "Username must be 3-24 characters." });
+    if (!/^[a-zA-Z0-9_]+$/.test(trimmed)) return res.status(400).json({ message: "Username can only contain letters, numbers, and underscores." });
+    
+    // Gender validation
+    const validGenders = ['male', 'female', 'other', 'none'];
+    if (gender && !validGenders.includes(gender)) return res.status(400).json({ message: "Invalid gender value." });
+    
+    // DOB validation
+    let parsedDob;
+    if (dob) {
+      parsedDob = new Date(dob);
+      if (isNaN(parsedDob.getTime()) || parsedDob >= new Date()) return res.status(400).json({ message: "Invalid date of birth." });
+    }
+
+    const existingUser = await User.findOne({ username: trimmed });
     if (existingUser) return res.status(400).json({ message: "Username already taken" });
 
-    const secret = otplib.generateSecret();
+    const secret = otplib.authenticator.generateSecret();
     const newUser = new User({ 
-      username, 
-      displayName: displayName || username, 
-      dob,
+      username: trimmed, 
+      displayName: (displayName || trimmed).substring(0, 32), 
+      dob: parsedDob,
       gender: gender || 'none',
       totpSecret: secret, 
       isVerified: false,
@@ -71,12 +89,14 @@ router.post('/register', async (req, res) => {
 router.post('/verify-registration', async (req, res) => {
   try {
     const { username, token } = req.body;
+    if (!username || !token) return res.status(400).json({ message: "Username and token are required." });
+    if (typeof token !== 'string' || !/^\d{6}$/.test(token)) return res.status(400).json({ message: "Token must be a 6-digit code." });
     const user = await User.findOne({ username });
     if (!user) return res.status(404).json({ message: "User not found" });
     if (user.isVerified) return res.status(400).json({ message: "User already verified" });
 
     const decryptedSecret = decrypt(user.totpSecret);
-    const isValid = await otplib.verify({ token, secret: decryptedSecret });
+    const isValid = otplib.authenticator.check(token, decryptedSecret);
     if (!isValid) return res.status(400).json({ message: "Invalid Code" });
 
     user.isVerified = true;
@@ -124,12 +144,13 @@ router.post('/setup', auth, upload.single('avatar'), async (req, res) => {
 router.post('/login', async (req, res) => {
   try {
     const { username, token } = req.body;
+    if (!username || !token) return res.status(400).json({ message: "Username and token are required." });
     const user = await User.findOne({ username });
     if (!user) return res.status(404).json({ message: "User not found" });
     if (!user.isVerified) return res.status(403).json({ message: "Account setup not complete." });
 
     const decryptedSecret = decrypt(user.totpSecret);
-    const isValid = await otplib.verify({ token, secret: decryptedSecret });
+    const isValid = otplib.authenticator.check(token, decryptedSecret);
     
     let isRecovery = false;
     if (!isValid && user.recoveryKeys && user.recoveryKeys.length > 0) {
@@ -147,10 +168,12 @@ router.post('/login', async (req, res) => {
 
     if (!isValid && !isRecovery) return res.status(400).json({ message: "Invalid access key or recovery code." });
 
-    // Recovery Protocol
-    if (user.scheduledDeletion) {
-      user.scheduledDeletion = null;
-      user.isDisabled = false;
+    // Always persist recovery key usage + recovery protocol
+    if (isRecovery || user.scheduledDeletion) {
+      if (user.scheduledDeletion) {
+        user.scheduledDeletion = null;
+        user.isDisabled = false;
+      }
       await user.save();
     }
 

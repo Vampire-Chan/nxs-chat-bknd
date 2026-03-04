@@ -19,4 +19,10 @@ const NotificationSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
+// Performance indexes
+NotificationSchema.index({ recipient: 1, createdAt: -1 });
+NotificationSchema.index({ recipient: 1, isRead: 1 });
+NotificationSchema.index({ recipient: 1, 'metadata.channelId': 1, isRead: 1 });
+NotificationSchema.index({ recipient: 1, 'metadata.postId': 1, isRead: 1 });
+
 module.exports = mongoose.model('Notification', NotificationSchema);

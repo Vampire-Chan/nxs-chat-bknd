@@ -17,4 +17,7 @@ const ReportSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
+ReportSchema.index({ status: 1 });
+ReportSchema.index({ targetType: 1, targetId: 1 });
+
 module.exports = mongoose.model('Report', ReportSchema);

@@ -63,7 +63,7 @@ const validateUploadLimit = async (req, res, next) => {
 };
 
 // UPLOAD MEDIA & CREATE MESSAGE
-router.post('/upload', auth, validateUploadLimit, upload.single('file'), async (req, res) => {
+router.post('/upload', auth, upload.single('file'), validateUploadLimit, async (req, res) => {
   try {
     const { channelId, content, mediaType } = req.body;
     if (!req.file) return res.status(400).json({ message: "No media detected." });

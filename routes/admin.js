@@ -121,7 +121,11 @@ router.post('/identities/:id/mod-action', auth, adminAuth, async (req, res) => {
     if (action === 'shadow_ban') update.isShadowBanned = true;
     if (action === 'unshadow_ban') update.isShadowBanned = false;
     
+    if (!['ban', 'unban', 'shadow_ban', 'unshadow_ban'].includes(action)) {
+      return res.status(400).json({ message: 'Unknown action.' });
+    }
     const user = await User.findByIdAndUpdate(req.params.id, { $set: update }, { new: true });
+    if (!user) return res.status(404).json({ message: 'Identity not found.' });
     res.json({ message: `Action ${action} applied to ${user.username}` });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -193,6 +197,7 @@ router.get('/realms', auth, adminAuth, async (req, res) => {
 router.delete('/realms/:id', auth, adminAuth, async (req, res) => {
   try {
     const realm = await Realm.findById(req.params.id);
+    if (!realm) return res.status(404).json({ message: "Realm not found." });
     if (realm.isSystem) return res.status(403).json({ message: "Cannot collapse the Nexus." });
     
     await User.updateMany({ realms: realm._id }, { $pull: { realms: realm._id } });

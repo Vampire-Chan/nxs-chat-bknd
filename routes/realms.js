@@ -64,7 +64,9 @@ router.get('/me', auth, async (req, res) => {
 router.post('/', auth, async (req, res) => {
   try {
     const { name } = req.body;
-    const newRealm = new Realm({ name, owner: req.user.id, members: [req.user.id] });
+    if (!name || typeof name !== 'string' || name.trim().length === 0) return res.status(400).json({ message: "Realm name is required." });
+    if (name.trim().length > 64) return res.status(400).json({ message: "Realm name too long (max 64 chars)." });
+    const newRealm = new Realm({ name: name.trim(), owner: req.user.id, members: [req.user.id] });
     const saved = await newRealm.save();
     const defaultChannels = await Channel.insertMany([
       { realm: saved._id, name: 'broadcasts', type: 'announcement' },
@@ -99,7 +101,11 @@ router.post('/:id/channels', auth, async (req, res) => {
     if (realm.owner.toString() !== req.user.id) return res.status(403).json({ message: "Sovereign only" });
 
     const { name, type } = req.body;
-    const newChannel = new Channel({ realm: req.params.id, name, type });
+    if (!name || typeof name !== 'string' || name.trim().length === 0) return res.status(400).json({ message: "Channel name is required." });
+    if (name.trim().length > 48) return res.status(400).json({ message: "Channel name too long (max 48 chars)." });
+    const allowedTypes = ['text', 'voice', 'feed', 'reels', 'announcement'];
+    if (!type || !allowedTypes.includes(type)) return res.status(400).json({ message: `Invalid channel type. Allowed: ${allowedTypes.join(', ')}` });
+    const newChannel = new Channel({ realm: req.params.id, name: name.trim(), type });
     const saved = await newChannel.save();
     realm.channels.push(saved._id);
     await realm.save();
@@ -145,7 +151,8 @@ router.post('/join/:code', auth, async (req, res) => {
     const invite = await Invite.findOne({ code: req.params.code });
     if (!invite) return res.status(404).json({ message: "Invalid Code" });
     const realm = await Realm.findById(invite.realm);
-    if (!realm.members.includes(req.user.id)) {
+    if (!realm) return res.status(404).json({ message: "Realm no longer exists." });
+    if (!realm.members.some(m => m.toString() === req.user.id)) {
       realm.members.push(req.user.id); await realm.save();
       await User.findByIdAndUpdate(req.user.id, { $push: { realms: realm._id } });
     }

@@ -58,20 +58,25 @@ router.post('/', auth, validatePostLimit, upload.single('file'), async (req, res
       return res.status(400).json({ message: "Visual data required." });
     }
 
+    // Validate caption length
+    const safeCaption = caption ? String(caption).substring(0, 2000) : '';
+
     const user = await User.findById(req.user.id);
     let isPublic = isPublicStr === 'true';
     let tags = req.body.tags ? (Array.isArray(req.body.tags) ? req.body.tags : req.body.tags.split(',')) : [];
+    // Sanitize and limit tags
+    tags = tags.map((t: string) => String(t).trim().toLowerCase().substring(0, 32)).filter((t: string) => t.length > 0).slice(0, 20);
 
     // Tag Extraction Protocol: Scan caption for #hashtags if tags array is empty
-    if (tags.length === 0 && caption) {
-      const extracted = caption.match(/#(\w+)/g);
+    if (tags.length === 0 && safeCaption) {
+      const extracted = safeCaption.match(/#(\w+)/g);
       if (extracted) {
-        tags = extracted.map(t => t.substring(1).toLowerCase());
+        tags = extracted.map(t => t.substring(1).toLowerCase()).slice(0, 20);
       }
     }
 
     const postData = {
-      caption: caption || "",
+      caption: safeCaption,
       imageUrl: req.file.path,
       author: req.user.id,
       isPublic: isPublic,
@@ -190,7 +195,7 @@ router.get('/all', auth, async (req, res) => {
     })
     .populate('author', 'username avatar displayName isPrivate isDisabled')
     .populate('sourceRealm', 'name icon isDiscoverable')
-    .sort({ 'likes.length': -1 })
+    .sort({ createdAt: -1 })
     .limit(20);
 
     const now = new Date();
@@ -213,7 +218,7 @@ router.get('/all', auth, async (req, res) => {
 
         // A. GRAVITY (Social Engagement)
         const followedLikes = post.likes.filter(id => 
-          currentUser.following.includes(id) || currentUser.friends.includes(id)
+          currentUser.following.some(f => f.toString() === id.toString()) || currentUser.friends.some(f => f.toString() === id.toString())
         ).length;
         
         const rawEngagement = post.likes.length + (post.comments.length * 2);
@@ -310,7 +315,7 @@ router.post('/:id/like', auth, async (req, res) => {
     const User = require('../models/User');
     const user = await User.findById(req.user.id);
 
-    const index = post.likes.indexOf(req.user.id);
+    const index = post.likes.findIndex(id => id.toString() === req.user.id);
     if (index === -1) {
       post.likes.push(req.user.id);
       // Boost resonance for liking

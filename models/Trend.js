@@ -8,4 +8,7 @@ const TrendSchema = new mongoose.Schema({
   expiresAt: { type: Date } // Trends shouldn't last forever
 });
 
+TrendSchema.index({ score: -1 });
+TrendSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
 module.exports = mongoose.model('Trend', TrendSchema);

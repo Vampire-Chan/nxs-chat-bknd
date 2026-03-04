@@ -37,7 +37,10 @@ router.post('/', auth, async (req, res) => {
       type: 'dm',
       members: { $all: [req.user.id, targetUserId], $size: 2 }
     });
-    if (dm) return res.json(dm);
+    if (dm) {
+      const populated = await Channel.findById(dm._id).populate('members', 'username avatar status');
+      return res.json(populated);
+    }
 
     dm = new Channel({
       name: "Private_Link",
@@ -45,7 +48,8 @@ router.post('/', auth, async (req, res) => {
       members: [req.user.id, targetUserId]
     });
     await dm.save();
-    res.json(dm);
+    const populated = await Channel.findById(dm._id).populate('members', 'username avatar status');
+    res.json(populated);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -53,9 +57,8 @@ router.post('/', auth, async (req, res) => {
 router.post('/group', auth, async (req, res) => {
   const { userIds, name } = req.body; // Array of IDs
   try {
-    if (userIds.length > 49) return res.status(400).json({ message: "Identity limit exceeded (Max 50)." });
-    
     const members = [...new Set([...userIds, req.user.id])]; // Unique IDs including sender
+    if (members.length > 50) return res.status(400).json({ message: "Identity limit exceeded (Max 50)." });
 
     const group = new Channel({
       name: name || "Group_Link",

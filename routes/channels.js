@@ -15,14 +15,14 @@ const authorizeChannelAccess = async (req, res, next) => {
 
     // For DM channels, check if user is a member
     if (channel.type === 'dm' || channel.type === 'group_dm') {
-      if (!channel.members.includes(req.user.id)) {
+      if (!channel.members.some(m => m.toString() === req.user.id)) {
         return res.status(403).json({ message: "Access Denied" });
       }
     } 
     // For realm channels, check if user is a member of the parent realm
     else if (channel.realm) {
       const realm = await Realm.findById(channel.realm);
-      if (!realm || !realm.members.includes(req.user.id)) {
+      if (!realm || !realm.members.some(m => m.toString() === req.user.id)) {
         return res.status(403).json({ message: "Access Denied" });
       }
     } 
@@ -53,6 +53,7 @@ router.put('/messages/:id', auth, async (req, res) => {
     }
 
     msg.content = content;
+    msg.editedAt = new Date();
     await msg.save();
 
     const populated = await Message.findById(msg._id).populate('sender', 'username avatar badges tier isAdmin');
@@ -152,11 +153,18 @@ router.post('/schedule', auth, async (req, res) => {
   try {
     const { channelId, content, scheduledFor, parentMessageId } = req.body;
     
+    if (!channelId) return res.status(400).json({ message: "Channel ID required." });
     if (!content || !scheduledFor) {
       return res.status(400).json({ message: "Content and dispatch time required." });
     }
+    if (typeof content === 'string' && content.length > 4000) {
+      return res.status(400).json({ message: "Message too long (max 4000 chars)." });
+    }
 
     const scheduledDate = new Date(scheduledFor);
+    if (isNaN(scheduledDate.getTime())) {
+      return res.status(400).json({ message: "Invalid date format." });
+    }
     if (scheduledDate <= new Date()) {
       return res.status(400).json({ message: "Dispatch time must be in the future." });
     }

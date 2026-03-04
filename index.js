@@ -124,6 +124,7 @@ io.use(async (socket, next) => {
 // Track Online Users & Voice Rooms
 const onlineUsers = new Map(); 
 const voiceRooms = {}; // { roomID: [{ socketId, user }, ...] }
+const pendingCalls = {}; // { channelId: { callerId, recipients: [userId], type } } — GLOBAL so all sockets can access
 const lastMessageTimestamp = new Map(); // Rate limiting map for sockets
 
 io.on('connection', (socket) => {
@@ -157,9 +158,13 @@ io.on('connection', (socket) => {
 
       console.log(`📞 Global Call Request: ${fromId} -> ${to} (${type})`);
       
+      const directChannelId = `direct:${fromId}`;
       if (onlineUsers.has(to)) {
+        // Store in pendingCalls so accept_call can find it
+        pendingCalls[directChannelId] = { callerId: fromId, recipients: [to], type };
+
         io.to(to).emit('incoming_call', {
-          channelId: `direct:${fromId}`,
+          channelId: directChannelId,
           type,
           sender: { 
             id: fromId, 
@@ -273,6 +278,12 @@ io.on('connection', (socket) => {
     }
     lastMessageTimestamp.set(userId, now);
 
+    // Input validation
+    if (!data.channelId || (!data.content && !data.mediaUrl)) return;
+    if (typeof data.content === 'string' && data.content.length > 4000) {
+      return socket.emit('rate_limit_exceeded', { message: "Message too long (max 4000 chars)." });
+    }
+
     console.log(`💬 Message from ${userId} for channel ${data.channelId}`);
     try {
       const channel = await Channel.findById(data.channelId);
@@ -306,24 +317,26 @@ io.on('connection', (socket) => {
       channel.lastMessageAt = new Date();
       await channel.save();
 
-      // NOTIFY RECIPIENTS
-      const recipients = channel.members.filter(m => m.toString() !== userId);
-      const Notification = require('./models/Notification');
-      
-      for (const recipientId of recipients) {
-        const notif = new Notification({
-          recipient: recipientId,
-          sender: userId,
-          type: 'mention',
-          content: channel.type === 'dm' ? 'transmitted a new signal to you.' : `transmitted a signal in #${channel.name}`,
-          metadata: { channelId: channel._id }
-        });
-        await notif.save();
+      // NOTIFY RECIPIENTS (only for DM/group_dm channels that have members)
+      if (channel.type === 'dm' || channel.type === 'group_dm') {
+        const recipients = channel.members.filter(m => m.toString() !== userId);
+        const Notification = require('./models/Notification');
         
-        const populatedNotif = await Notification.findById(notif._id).populate('sender', 'username avatar');
-        
-        io.to(recipientId.toString()).emit('new_notification', populatedNotif);
-        io.to(recipientId.toString()).emit('identity_sync_update');
+        for (const recipientId of recipients) {
+          const notif = new Notification({
+            recipient: recipientId,
+            sender: userId,
+            type: 'mention',
+            content: channel.type === 'dm' ? 'transmitted a new signal to you.' : `transmitted a signal in #${channel.name}`,
+            metadata: { channelId: channel._id }
+          });
+          await notif.save();
+          
+          const populatedNotif = await Notification.findById(notif._id).populate('sender', 'username avatar');
+          
+          io.to(recipientId.toString()).emit('new_notification', populatedNotif);
+          io.to(recipientId.toString()).emit('identity_sync_update');
+        }
       }
 
       io.to(data.channelId).emit('receive_message', populatedMessage);
@@ -331,8 +344,6 @@ io.on('connection', (socket) => {
       console.error("Socket send_message error:", err);
     }
   });
-
-  const pendingCalls = {}; // { channelId: { callerId, recipients: [userId] } }
 
   socket.on('initiate_call', async (data) => {
     const { channelId, type, senderId, senderName, senderAvatar } = data;
@@ -368,10 +379,24 @@ io.on('connection', (socket) => {
     const call = pendingCalls[channelId];
     if (call) {
       // Notify the original caller that the recipient has accepted and is ready to establish P2P
-      io.to(call.callerId).emit('caller_ready', { channelId, acceptedBy: socket.user._id });
+      io.to(call.callerId).emit('caller_ready', { channelId, acceptedBy: socket.user._id, type: call.type });
       
-      // Also notify all other recipients that the call is now active/answered elsewhere if needed
-      // For now, we just clean up the pending call
+      // Dismiss incoming_call on all other recipients
+      call.recipients.forEach(rid => {
+        if (rid !== socket.user._id.toString()) {
+          io.to(rid).emit('call_dismissed', { channelId });
+        }
+      });
+
+      delete pendingCalls[channelId];
+    }
+  });
+
+  socket.on('reject_call', ({ channelId }) => {
+    const call = pendingCalls[channelId];
+    if (call) {
+      // Notify the caller that the call was rejected
+      io.to(call.callerId).emit('call_rejected', { channelId });
       delete pendingCalls[channelId];
     }
   });
