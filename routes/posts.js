@@ -65,7 +65,7 @@ router.post('/', auth, validatePostLimit, upload.single('file'), async (req, res
     let isPublic = isPublicStr === 'true';
     let tags = req.body.tags ? (Array.isArray(req.body.tags) ? req.body.tags : req.body.tags.split(',')) : [];
     // Sanitize and limit tags
-    tags = tags.map((t: string) => String(t).trim().toLowerCase().substring(0, 32)).filter((t: string) => t.length > 0).slice(0, 20);
+    tags = tags.map(t => String(t).trim().toLowerCase().substring(0, 32)).filter(t => t.length > 0).slice(0, 20);
 
     // Tag Extraction Protocol: Scan caption for #hashtags if tags array is empty
     if (tags.length === 0 && safeCaption) {
