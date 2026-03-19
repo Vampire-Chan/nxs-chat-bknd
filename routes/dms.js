@@ -57,6 +57,9 @@ router.post('/', auth, async (req, res) => {
 router.post('/group', auth, async (req, res) => {
   const { userIds, name } = req.body; // Array of IDs
   try {
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({ message: "userIds must be a non-empty array." });
+    }
     const members = [...new Set([...userIds, req.user.id])]; // Unique IDs including sender
     if (members.length > 50) return res.status(400).json({ message: "Identity limit exceeded (Max 50)." });
 

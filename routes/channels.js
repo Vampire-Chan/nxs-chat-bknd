@@ -7,6 +7,7 @@ const Notification = require('../models/Notification');
 const auth = require('../middleware/auth');
 const Realm = require('../models/Realm');
 
+const MAX_MESSAGE_LENGTH = 4000;
 // Middleware to authorize if a user can access a channel's content
 const authorizeChannelAccess = async (req, res, next) => {
   try {
@@ -45,6 +46,12 @@ const authorizeChannelAccess = async (req, res, next) => {
 router.put('/messages/:id', auth, async (req, res) => {
   try {
     const { content } = req.body;
+    if (!content || typeof content !== 'string') {
+      return res.status(400).json({ message: "Content is required." });
+    }
+    if (content.length > MAX_MESSAGE_LENGTH) {
+      return res.status(400).json({ message: `Message too long (max ${MAX_MESSAGE_LENGTH} chars).` });
+    }
     const msg = await Message.findById(req.params.id);
     if (!msg) return res.status(404).json({ message: "Transmission lost." });
     
@@ -157,8 +164,8 @@ router.post('/schedule', auth, async (req, res) => {
     if (!content || !scheduledFor) {
       return res.status(400).json({ message: "Content and dispatch time required." });
     }
-    if (typeof content === 'string' && content.length > 4000) {
-      return res.status(400).json({ message: "Message too long (max 4000 chars)." });
+    if (typeof content === 'string' && content.length > MAX_MESSAGE_LENGTH) {
+      return res.status(400).json({ message: `Message too long (max ${MAX_MESSAGE_LENGTH} chars).` });
     }
 
     const scheduledDate = new Date(scheduledFor);
@@ -167,6 +174,23 @@ router.post('/schedule', auth, async (req, res) => {
     }
     if (scheduledDate <= new Date()) {
       return res.status(400).json({ message: "Dispatch time must be in the future." });
+    }
+
+    // Authorization: Ensure user is a member of the target channel
+    const channel = await Channel.findById(channelId);
+    if (!channel) return res.status(404).json({ message: "Channel not found." });
+
+    if (channel.type === 'dm' || channel.type === 'group_dm') {
+      if (!channel.members.some(m => m.toString() === req.user.id)) {
+        return res.status(403).json({ message: "Access Denied." });
+      }
+    } else if (channel.realm) {
+      const realm = await Realm.findById(channel.realm);
+      if (!realm || !realm.members.some(m => m.toString() === req.user.id)) {
+        return res.status(403).json({ message: "Access Denied." });
+      }
+    } else {
+      return res.status(403).json({ message: "Access Denied." });
     }
 
     const scheduled = new ScheduledMessage({

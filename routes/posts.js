@@ -10,6 +10,9 @@ const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
 
+const MAX_CAPTION_LENGTH = 2000;
+const MAX_COMMENT_LENGTH = 2000;
+
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -59,7 +62,7 @@ router.post('/', auth, validatePostLimit, upload.single('file'), async (req, res
     }
 
     // Validate caption length
-    const safeCaption = caption ? String(caption).substring(0, 2000) : '';
+    const safeCaption = caption ? String(caption).substring(0, MAX_CAPTION_LENGTH) : '';
 
     const user = await User.findById(req.user.id);
     let isPublic = isPublicStr === 'true';
@@ -131,7 +134,9 @@ router.put('/:id', auth, async (req, res) => {
       return res.status(403).json({ message: "Unauthorized node modification." });
     }
 
-    post.caption = req.body.caption || post.caption;
+    if (req.body.caption !== undefined) {
+      post.caption = String(req.body.caption).substring(0, MAX_CAPTION_LENGTH);
+    }
     await post.save();
     
     res.json({ message: "Broadcast recalibrated.", post });
@@ -312,6 +317,7 @@ router.get('/user/:userId', auth, async (req, res) => {
 router.post('/:id/like', auth, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ message: "Broadcast not found." });
     const User = require('../models/User');
     const user = await User.findById(req.user.id);
 
@@ -361,8 +367,15 @@ router.post('/:id/comment', auth, async (req, res) => {
 
     const { text, parentCommentId } = req.body;
 
+    if (!text || typeof text !== 'string' || text.trim().length === 0) {
+      return res.status(400).json({ message: "Comment text is required." });
+    }
+    if (text.length > MAX_COMMENT_LENGTH) {
+      return res.status(400).json({ message: `Comment too long (max ${MAX_COMMENT_LENGTH} chars).` });
+    }
+
     const newComment = {
-      text: text,
+      text: text.trim(),
       user: req.user.id,
       parentCommentId: parentCommentId || null,
       createdAt: new Date()

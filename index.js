@@ -346,12 +346,17 @@ io.on('connection', (socket) => {
   });
 
   socket.on('initiate_call', async (data) => {
-    const { channelId, type, senderId, senderName, senderAvatar } = data;
+    const { channelId, type } = data;
+    // SECURE: Always use the authenticated socket user's ID, not the client-provided one
+    const senderId = socket.user._id.toString();
     console.log(`📞 Call Init: ${type} from ${senderId} in ${channelId}`);
     
     try {
       const channel = await Channel.findById(channelId);
       if (!channel) return;
+
+      // SECURITY: Verify the caller is actually a member of this channel
+      if (!channel.members.some(m => m.toString() === senderId)) return;
 
       const recipients = channel.members.filter(m => m.toString() !== senderId);
       pendingCalls[channelId] = { callerId: senderId, recipients: recipients.map(r => r.toString()) };
@@ -359,7 +364,7 @@ io.on('connection', (socket) => {
       const payload = {
         channelId,
         type,
-        sender: { id: senderId, username: senderName, avatar: senderAvatar },
+        sender: { id: senderId, username: socket.user.username, avatar: socket.user.avatar },
         timestamp: Date.now()
       };
       
@@ -401,7 +406,9 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('react_message', async ({ messageId, emoji, userId, channelId }) => {
+  socket.on('react_message', async ({ messageId, emoji, channelId }) => {
+    // SECURE: Always use the authenticated socket user's ID, never trust client-provided userId
+    const reactingUserId = socket.user._id.toString();
     try {
       const msg = await Message.findById(messageId);
       if (!msg) return;
@@ -409,9 +416,9 @@ io.on('connection', (socket) => {
       if (!msg.reactions) msg.reactions = {};
       
       const currentReactions = msg.reactions[emoji] || [];
-      const index = currentReactions.indexOf(userId);
+      const index = currentReactions.indexOf(reactingUserId);
       
-      if (index === -1) currentReactions.push(userId);
+      if (index === -1) currentReactions.push(reactingUserId);
       else currentReactions.splice(index, 1);
       
       msg.reactions[emoji] = currentReactions;

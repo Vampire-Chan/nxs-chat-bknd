@@ -5,41 +5,53 @@ const Post = require('../models/Post');
 const auth = require('../middleware/auth');
 
 // GLOBAL MATRIX SEARCH (Robust Calibration)
+const MAX_SEARCH_QUERY_LENGTH = 200;
+
 router.get('/', auth, async (req, res) => {
   const { q, type, sortBy, author, startDate, endDate } = req.query;
   if (!q && !author && !startDate) return res.json({ users: [], realms: [], posts: [] });
 
   try {
-    const escapedQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(escapedQ, 'i');
     const results = { users: [], realms: [], posts: [] };
+
+    // Build regex only when a search term is provided
+    let regex = null;
+    if (q && typeof q === 'string' && q.trim().length > 0) {
+      const escapedQ = q.trim().substring(0, MAX_SEARCH_QUERY_LENGTH).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      regex = new RegExp(escapedQ, 'i');
+    }
 
     // 1. SEARCH USERS
     if (!type || type === 'users') {
-      results.users = await User.find({ 
-        $and: [
-          { $or: [{ username: regex }, { displayName: regex }] },
-          { isDisabled: { $ne: true } }
-        ]
-      }).limit(10).select('username avatar displayName tier badges');
+      if (regex) {
+        results.users = await User.find({ 
+          $and: [
+            { $or: [{ username: regex }, { displayName: regex }] },
+            { isDisabled: { $ne: true } }
+          ]
+        }).limit(10).select('username avatar displayName tier badges');
+      }
     }
 
     // 2. SEARCH REALMS (Sync with name and owner)
     if (!type || type === 'realms') {
-      results.realms = await Realm.find({ 
-        $or: [{ name: regex }, { vanityHandle: regex }],
-        isSystem: { $ne: true } 
-      })
-      .populate('owner', 'username avatar')
-      .limit(10);
+      if (regex) {
+        results.realms = await Realm.find({ 
+          $or: [{ name: regex }, { vanityHandle: regex }],
+          isSystem: { $ne: true } 
+        })
+        .populate('owner', 'username avatar')
+        .limit(10);
+      }
     }
 
     // 3. SEARCH POSTS (Robust filtering)
     if (!type || type === 'posts') {
-      let postQuery = { 
-        $or: [{ caption: regex }, { 'comments.text': regex }],
-        isPublic: true 
-      };
+      let postQuery = { isPublic: true };
+
+      if (regex) {
+        postQuery.$or = [{ caption: regex }, { 'comments.text': regex }];
+      }
 
       if (author) {
         const authorUser = await User.findOne({ username: author });
