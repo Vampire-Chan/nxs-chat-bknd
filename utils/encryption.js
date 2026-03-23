@@ -4,15 +4,16 @@ const ALGORITHM = 'aes-256-cbc';
 const IV_LENGTH = 16;
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
 
-let key;
 if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length !== 64) {
-  console.warn('⚠️  [CRITICAL] ENCRYPTION_KEY is missing or invalid. Encryption protocols will fail.');
-  // Generate a temporary key so the app doesn't crash during build/dry-run, 
-  // but real data will be inaccessible until configured in Render.
-  key = crypto.randomBytes(32); 
-} else {
-  key = Buffer.from(ENCRYPTION_KEY, 'hex');
+  console.error('❌ [FATAL] ENCRYPTION_KEY is missing or invalid. Application cannot start securely.');
+  // In production, we should exit. In development/build, we might need a fallback, 
+  // but for safety, we'll enforce it.
+  if (process.env.NODE_ENV === 'production') {
+    process.exit(1);
+  }
 }
+
+const key = ENCRYPTION_KEY ? Buffer.from(ENCRYPTION_KEY, 'hex') : crypto.randomBytes(32);
 
 function encrypt(text) {
   if (text === null || typeof text === 'undefined') return null;
@@ -28,9 +29,9 @@ function decrypt(text) {
   try {
     const parts = text.split(':');
     if (parts.length !== 2) {
-      // Could be an old, unencrypted value. Return as is.
-      // Or handle error appropriately. For now, we return it.
-      return text;
+      // If it's not in the expected format, we return null to ensure 
+      // unencrypted data isn't accidentally treated as valid decrypted data.
+      return null;
     }
     const iv = Buffer.from(parts.shift(), 'hex');
     const encryptedText = parts.join(':');
@@ -39,10 +40,8 @@ function decrypt(text) {
     decrypted += decipher.final('utf8');
     return decrypted;
   } catch (error) {
-    // If decryption fails, it might be an unencrypted value.
-    // Log the error and return the original text.
-    console.error("Decryption failed for a value, returning original. This might be expected during migration.", error);
-    return text;
+    console.error("Decryption failure. Data may be corrupt or key is invalid.");
+    return null; 
   }
 }
 

@@ -1,4 +1,10 @@
 require('dotenv').config();
+
+// Fix local DNS SRV resolution issues (ECONNREFUSED) without breaking production
+if (process.env.NODE_ENV !== 'production') {
+  require('dns').setServers(['8.8.8.8', '1.1.1.1']);
+}
+
 const express = require('express');
 const http = require('http');
 const mongoose = require('mongoose');

@@ -8,6 +8,7 @@ const Post = require('../models/Post');
 const Trend = require('../models/Trend');
 const User = require('../models/User');
 const aiOracle = require('./aiOracle');
+const { executeDeepPurge } = require('./purgeService');
 
 const DREAM_INTERVAL = 6 * 60 * 60 * 1000; // 6 Hours
 const SIX_MONTHS = 6 * 30 * 24 * 60 * 60 * 1000;
@@ -25,6 +26,7 @@ const syncMatrix = async () => {
   await processPendingTransmissions();
   await applyNeuralEntropy();
   await purgeInactiveNodes();
+  await processScheduledTerminations();
 };
 
 const applyNeuralEntropy = async () => {
@@ -58,23 +60,51 @@ const applyNeuralEntropy = async () => {
   }
 };
 
+/**
+ * 💀 PURGE INACTIVE NODES
+ * Automatically sever identity nodes inactive for 6+ months.
+ */
 const purgeInactiveNodes = async () => {
   const threshold = new Date(Date.now() - SIX_MONTHS);
   console.log(`🧹 [Resonance_Worker] Checking for inactive nodes (Older than ${threshold.toLocaleDateString()})...`);
   
   try {
-    // Note: In a production app, you might want to soft-delete or notify first.
-    // For Yantravani "Identity Lost" philosophy, we hard delete.
-    const result = await User.deleteMany({ 
+    const inactiveUsers = await User.find({ 
       lastSeenAt: { $lt: threshold },
-      isAdmin: { $ne: true } // Safety: Never purge the Architect
-    });
+      isAdmin: { $ne: true } 
+    }).select('_id');
     
-    if (result.deletedCount > 0) {
-      console.log(`   💀 Purged ${result.deletedCount} stagnant identity nodes from the void.`);
+    if (inactiveUsers.length > 0) {
+      console.log(`   💀 Initiating deep purge for ${inactiveUsers.length} stagnant identity nodes.`);
+      for (const user of inactiveUsers) {
+        await executeDeepPurge(user._id);
+      }
     }
   } catch (e) {
     console.error("❌ [Resonance_Worker] Purge failed:", e);
+  }
+};
+
+/**
+ * ⚡ PROCESS SCHEDULED TERMINATIONS
+ * Execute deletion for nodes that reached their 7-day grace period horizon.
+ */
+const processScheduledTerminations = async () => {
+  console.log("🕯️ [Resonance_Worker] Checking scheduled terminations...");
+  try {
+    const now = new Date();
+    const scheduledUsers = await User.find({
+      scheduledDeletion: { $lte: now }
+    }).select('_id');
+
+    if (scheduledUsers.length > 0) {
+      console.log(`   💀 Purging ${scheduledUsers.length} identity nodes who completed their grace period.`);
+      for (const user of scheduledUsers) {
+        await executeDeepPurge(user._id);
+      }
+    }
+  } catch (e) {
+    console.error("❌ [Resonance_Worker] Scheduled termination check failed:", e);
   }
 };
 
@@ -86,7 +116,7 @@ const processPendingTransmissions = async () => {
     // 1. Find all posts that are "pending" AI analysis
     const pendingPosts = await Post.find({ 
       "aiAnalysis.mood": "pending" 
-    }).limit(50); // Process in manageable chunks
+    }).limit(50); 
 
     if (pendingPosts.length === 0) {
       console.log("   ✨ No pending transmissions found. Matrix is in equilibrium.");
@@ -121,14 +151,14 @@ const processPendingTransmissions = async () => {
       if (evolution) {
         console.log("   🌀 Matrix Evolution Detected:", Object.keys(evolution));
         
-        // 1. Purge old trends (The Matrix forgets the past)
+        // 1. Purge old trends
         await Trend.deleteMany({});
 
         // 2. Inject new dreams
         const newTrends = Object.entries(evolution).map(([sector, tags]) => ({
           name: sector,
           tags: tags,
-          score: tags.length * 10, // Simple score based on tag volume
+          score: tags.length * 10,
           expiresAt: new Date(Date.now() + DREAM_INTERVAL)
         }));
 

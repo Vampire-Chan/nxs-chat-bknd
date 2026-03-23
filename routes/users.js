@@ -416,26 +416,9 @@ router.post('/me/disable', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 4. THE GREAT PURGE (Internal Helper - can be called by a cron job)
-// For now, I'm keeping your original deep delete logic here as a reference 
-// for when the 7 days are actually up.
-const executeDeepPurge = async (userId) => {
-  const Post = require('../models/Post');
-  const Message = require('../models/Message');
-  const Realm = require('../models/Realm');
-  const Notification = require('../models/Notification');
+const { executeDeepPurge } = require('../utils/purgeService');
 
-  await Promise.all([
-    Post.deleteMany({ author: userId }),
-    Message.deleteMany({ sender: userId }),
-    Notification.deleteMany({ recipient: userId }),
-    Notification.deleteMany({ sender: userId }),
-    Realm.deleteMany({ owner: userId }),
-    User.updateMany({}, { $pull: { followers: userId, following: userId, friends: userId, inboundRequests: userId, outboundRequests: userId } }),
-    Realm.updateMany({}, { $pull: { members: userId } })
-  ]);
-  await User.findByIdAndDelete(userId);
-};
+// ... rest of the imports ...
 
 // SEARCH & UTILS
 router.get('/public/list', auth, async (req, res) => {

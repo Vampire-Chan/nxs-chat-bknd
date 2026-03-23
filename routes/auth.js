@@ -95,11 +95,8 @@ router.post('/verify-registration', async (req, res) => {
     if (!user) return res.status(404).json({ message: "User not found" });
     if (user.isVerified) return res.status(400).json({ message: "User already verified" });
 
-    const decryptedSecret = decrypt(user.totpSecret);
-    const isValid = otplib.authenticator.check(token, decryptedSecret);
-    if (!isValid) return res.status(400).json({ message: "Invalid Code" });
-
-    user.isVerified = true;
+    const decryptedSecret = user.totpSecret && user.totpSecret.includes(':') ? decrypt(user.totpSecret) : user.totpSecret;
+      const isValid = otplib.authenticator.check(token, decryptedSecret);
     
     // Recovery Protocol: Cancel termination if user logs in
     if (user.scheduledDeletion) {
@@ -149,9 +146,9 @@ router.post('/login', async (req, res) => {
     if (!user) return res.status(404).json({ message: "User not found" });
     if (!user.isVerified) return res.status(403).json({ message: "Account setup not complete." });
 
-    const decryptedSecret = decrypt(user.totpSecret);
+    const decryptedSecret = user.totpSecret && user.totpSecret.includes(':') ? decrypt(user.totpSecret) : user.totpSecret;
     const isValid = otplib.authenticator.check(token, decryptedSecret);
-    
+
     let isRecovery = false;
     if (!isValid && user.recoveryKeys && user.recoveryKeys.length > 0) {
       const keyIndex = user.recoveryKeys.findIndex(k => {
