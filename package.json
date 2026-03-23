@@ -31,5 +31,8 @@
     "otplib": "^12.0.1",
     "qrcode": "^1.5.4",
     "socket.io": "^4.8.3"
+  },
+  "overrides": {
+    "cloudinary": "$cloudinary"
   }
 }
