@@ -106,11 +106,22 @@ router.get('/identities', auth, adminAuth, async (req, res) => {
 
 router.post('/identities/:id/authority', auth, adminAuth, async (req, res) => {
   try {
-    const { badges, isAdmin } = req.body;
+    const { badges, isAdmin, username } = req.body;
     const update = {};
 
     if (Array.isArray(badges)) update.badges = badges;
     if (typeof isAdmin === 'boolean') update.isAdmin = isAdmin;
+
+    if (username && typeof username === 'string' && username.trim().length >= 3 && username.trim().length <= 24) {
+      const trimmed = username.trim().toLowerCase();
+      if (!/^[a-zA-Z0-9_]+$/.test(trimmed)) {
+        return res.status(400).json({ message: "Username can only contain letters, numbers, and underscores." });
+      }
+      // Verify username is not taken
+      const existing = await User.findOne({ username: trimmed, _id: { $ne: req.params.id } });
+      if (existing) return res.status(400).json({ message: "Username already taken" });
+      update.username = trimmed;
+    }
 
     if (Object.keys(update).length === 0) {
       return res.status(400).json({ message: 'No authority updates provided.' });

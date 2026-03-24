@@ -97,7 +97,9 @@ router.post('/verify-registration', async (req, res) => {
 
     const decryptedSecret = user.totpSecret && user.totpSecret.includes(':') ? decrypt(user.totpSecret) : user.totpSecret;
       const isValid = otplib.authenticator.check(token, decryptedSecret);
-    
+    if (!isValid) return res.status(400).json({ message: 'Invalid verification code.' });
+    user.isVerified = true;
+
     // Recovery Protocol: Cancel termination if user logs in
     if (user.scheduledDeletion) {
       user.scheduledDeletion = null;
@@ -210,3 +212,4 @@ router.post('/login', async (req, res) => {
 });
 
 module.exports = router;
+
