@@ -81,7 +81,7 @@ router.post('/register', async (req, res) => {
       secret: secret // Raw secret for manual entry
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ message: "Server Error: " + err.message });
   }
 });
 
@@ -117,7 +117,7 @@ router.post('/verify-registration', async (req, res) => {
     const jwtToken = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
     res.status(200).json({ token: jwtToken, user: { _id: user._id, id: user._id, username: user.username, isSetupComplete: user.isSetupComplete } });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ message: "Server Error: " + err.message });
   }
 });
 
@@ -131,9 +131,23 @@ router.post('/setup', auth, upload.single('avatar'), async (req, res) => {
     if (req.file) updateData.avatar = req.file.path;
 
     const user = await User.findByIdAndUpdate(req.user.id, { $set: updateData }, { new: true }).select('-totpSecret');
+    
+    const io = req.app.get('socketio');
+    if (io) {
+      io.emit('identity_updated', { 
+        userId: user._id, 
+        avatar: user.avatar, 
+        displayName: user.displayName, 
+        gender: user.gender,
+        showAge: user.showAge,
+        showGender: user.showGender,
+        badges: user.badges
+      });
+    }
+
     res.json({ message: "Identity Calibration Complete", user: { ...user.toObject(), id: user._id } });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ message: "Server Error: " + err.message });
   }
 });
 
@@ -182,9 +196,16 @@ router.post('/login', async (req, res) => {
     }).save();
 
     const jwtToken = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    res.status(200).json({ token: jwtToken, user: { _id: user._id, id: user._id, username: user.username, avatar: user.avatar, isSetupComplete: user.isSetupComplete } });
+    
+    // Safely structure user object to avoid leaking secrets but keep all profile/auth data
+    const userResponse = user.toObject();
+    delete userResponse.totpSecret;
+    delete userResponse.recoveryKeys;
+    userResponse.id = user._id;
+
+    res.status(200).json({ token: jwtToken, user: userResponse });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ message: "Server Error: " + err.message });
   }
 });
 

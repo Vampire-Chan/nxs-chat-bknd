@@ -18,6 +18,9 @@ const Realm = require('./models/Realm');
 const User = require('./models/User');
 
 const app = express();
+// Enable Trust Proxy for Render deployment
+app.set('trust proxy', 1);
+
 const server = http.createServer(app);
 
 // HELP DIAGNOSE RENDER FAILURES
@@ -48,7 +51,7 @@ const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1 || origin.endsWith('.vercel.app')) {
+    if (allowedOrigins.indexOf(origin) !== -1 || origin.endsWith('.vercel.app') || origin.endsWith('.onrender.com')) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -74,6 +77,7 @@ const apiLimiter = rateLimit({
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10, // Limit auth attempts
+  message: { message: "Too many auth attempts. Please wait." },
   standardHeaders: true,
   legacyHeaders: false,
 });

@@ -107,7 +107,16 @@ router.get('/identities', auth, adminAuth, async (req, res) => {
 router.post('/identities/:id/authority', auth, adminAuth, async (req, res) => {
   try {
     const { badges, isAdmin } = req.body;
-    const user = await User.findByIdAndUpdate(req.params.id, { $set: { badges, isAdmin } }, { new: true });
+    const update = {};
+
+    if (Array.isArray(badges)) update.badges = badges;
+    if (typeof isAdmin === 'boolean') update.isAdmin = isAdmin;
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ message: 'No authority updates provided.' });
+    }
+
+    const user = await User.findByIdAndUpdate(req.params.id, { $set: update }, { new: true });
     res.json(user);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

@@ -54,7 +54,7 @@ const UserSchema = new mongoose.Schema({
 });
 
 // Encrypt sensitive fields before saving
-UserSchema.pre('save', function(next) {
+UserSchema.pre('save', function() {
   if (this.isModified('totpSecret')) {
     this.totpSecret = encrypt(this.totpSecret);
   }
@@ -66,7 +66,6 @@ UserSchema.pre('save', function(next) {
       }
     });
   }
-  next();
 });
 
 module.exports = mongoose.model('User', UserSchema);

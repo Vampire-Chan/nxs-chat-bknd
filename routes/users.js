@@ -188,11 +188,16 @@ router.post('/vani/sync/:id/accept', auth, async (req, res) => {
 // PROFILE UPDATE
 router.put('/me', auth, identityUpload, async (req, res) => {
   try {
-    const { bio, status, customStatus, isPrivate, showAge, showGender, displayName, dob, gender } = req.body;
+    const { bio, status, customStatus, isPrivate, showAge, showGender, displayName, dob, gender, creationUI } = req.body;
     const currentUser = await User.findById(req.user.id);
     const updateData = {};
 
-    if (displayName !== undefined) updateData.displayName = displayName.substring(0, 32);
+    if (displayName !== undefined) {
+      const normalizedDisplayName = String(displayName).trim();
+      if (normalizedDisplayName.length > 0) {
+        updateData.displayName = normalizedDisplayName.substring(0, 32);
+      }
+    }
     
     // GENDER LOCK PROTOCOL: Only allow setting if currently 'none'
     if (gender && (!currentUser.gender || currentUser.gender === 'none')) {
@@ -217,6 +222,12 @@ router.put('/me', auth, identityUpload, async (req, res) => {
       if (validStatuses.includes(status)) updateData.status = status;
     }
     if (customStatus !== undefined) updateData.customStatus = String(customStatus).substring(0, 128);
+    if (creationUI !== undefined) {
+      const validCreationUIs = ['auto', 'bar', 'button'];
+      if (validCreationUIs.includes(creationUI)) {
+        updateData.creationUI = creationUI;
+      }
+    }
 
     // SECURITY: Recovery keys and Admin status MUST NOT be updatable via general profile update
     delete req.body.recoveryKeys;
@@ -290,6 +301,20 @@ router.put('/me', auth, identityUpload, async (req, res) => {
     }
 
     const updatedUser = await User.findByIdAndUpdate(req.user.id, { $set: updateData }, { new: true }).select('-totpSecret');
+    
+    const io = req.app.get('socketio');
+    if (io) {
+      io.emit('identity_updated', { 
+        userId: updatedUser._id, 
+        avatar: updatedUser.avatar, 
+        displayName: updatedUser.displayName, 
+        gender: updatedUser.gender,
+        showAge: updatedUser.showAge,
+        showGender: updatedUser.showGender,
+        badges: updatedUser.badges
+      });
+    }
+
     res.json(updatedUser);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
