@@ -10,36 +10,45 @@ router.get('/', auth, async (req, res) => {
   if (!q && !author && !startDate) return res.json({ users: [], realms: [], posts: [] });
 
   try {
-    const escapedQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(escapedQ, 'i');
+    const queryText = typeof q === 'string' ? q.trim() : '';
+    const escapedQ = queryText ? queryText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '';
+    const regex = escapedQ ? new RegExp(escapedQ, 'i') : null;
     const results = { users: [], realms: [], posts: [] };
 
     // 1. SEARCH USERS
     if (!type || type === 'users') {
+      if (!regex) {
+        results.users = [];
+      } else {
       results.users = await User.find({ 
         $and: [
           { $or: [{ username: regex }, { displayName: regex }] },
           { isDisabled: { $ne: true } }
         ]
       }).limit(10).select('username avatar displayName tier badges');
+      }
     }
 
     // 2. SEARCH REALMS (Sync with name and owner)
     if (!type || type === 'realms') {
+      if (!regex) {
+        results.realms = [];
+      } else {
       results.realms = await Realm.find({ 
         $or: [{ name: regex }, { vanityHandle: regex }],
         isSystem: { $ne: true } 
       })
       .populate('owner', 'username avatar')
       .limit(10);
+      }
     }
 
     // 3. SEARCH POSTS (Robust filtering)
     if (!type || type === 'posts') {
-      let postQuery = { 
-        $or: [{ caption: regex }, { 'comments.text': regex }],
-        isPublic: true 
-      };
+      let postQuery = { isPublic: true };
+      if (regex) {
+        postQuery.$or = [{ caption: regex }, { 'comments.text': regex }];
+      }
 
       if (author) {
         const authorUser = await User.findOne({ username: author });

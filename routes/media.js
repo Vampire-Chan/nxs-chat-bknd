@@ -6,6 +6,7 @@ const multer = require('multer');
 const Message = require('../models/Message');
 const Channel = require('../models/Channel');
 const User = require('../models/User');
+const Realm = require('../models/Realm');
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -30,10 +31,25 @@ const upload = multer({
 // Tiered Upload Limit Middleware
 const validateUploadLimit = async (req, res, next) => {
   try {
+    const channelId = req.query.channelId || req.body.channelId;
+    if (!channelId) return res.status(400).json({ message: "Channel ID is required." });
+
     const user = await User.findById(req.user.id);
-    const channel = await Channel.findById(req.body.channelId);
+    const channel = await Channel.findById(channelId);
     
     if (!user || !channel) return res.status(404).json({ message: "Context lost." });
+
+    // SECURITY: Verify uploader is allowed to access the channel before processing upload
+    if (channel.type === 'dm' || channel.type === 'group_dm') {
+      if (!channel.members.some(m => m.toString() === req.user.id)) {
+        return res.status(403).json({ message: "Access denied." });
+      }
+    } else {
+      const realm = await Realm.findById(channel.realm);
+      if (!realm || !realm.members.some(m => m.toString() === req.user.id)) {
+        return res.status(403).json({ message: "Access denied." });
+      }
+    }
 
     const isElite = user.tier === 'elite' || user.isAdmin;
     const isDM = channel.type === 'dm' || channel.type === 'group_dm';
@@ -63,9 +79,10 @@ const validateUploadLimit = async (req, res, next) => {
 };
 
 // UPLOAD MEDIA & CREATE MESSAGE
-router.post('/upload', auth, upload.single('file'), validateUploadLimit, async (req, res) => {
+router.post('/upload', auth, validateUploadLimit, upload.single('file'), async (req, res) => {
   try {
-    const { channelId, content, mediaType } = req.body;
+    const channelId = req.query.channelId || req.body.channelId;
+    const { content, mediaType } = req.body;
     if (!req.file) return res.status(400).json({ message: "No media detected." });
 
     const newMessage = new Message({

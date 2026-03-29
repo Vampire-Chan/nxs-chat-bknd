@@ -83,12 +83,11 @@ router.delete('/messages/:id', auth, async (req, res) => {
 });
 
 // 3. MARK AS READ
-router.post('/:id/read', auth, async (req, res) => {
+router.post('/:id/read', auth, authorizeChannelAccess, async (req, res) => {
   try {
     const channelId = req.params.id;
     const userId = req.user.id;
-    const channel = await Channel.findById(channelId);
-    if (!channel) return res.status(404).json({ message: "Node lost" });
+    const channel = req.channel;
     if (!channel.lastSeen) channel.lastSeen = {};
     channel.lastSeen[userId] = new Date();
     channel.markModified('lastSeen');
@@ -101,12 +100,11 @@ router.post('/:id/read', auth, async (req, res) => {
 });
 
 // 4. MARK AS UNREAD
-router.post('/:id/unread', auth, async (req, res) => {
+router.post('/:id/unread', auth, authorizeChannelAccess, async (req, res) => {
   try {
     const channelId = req.params.id;
     const userId = req.user.id;
-    const channel = await Channel.findById(channelId);
-    if (!channel) return res.status(404).json({ message: "Node lost" });
+    const channel = req.channel;
     if (!channel.lastSeen) channel.lastSeen = {};
     channel.lastSeen[userId] = new Date(0);
     channel.markModified('lastSeen');

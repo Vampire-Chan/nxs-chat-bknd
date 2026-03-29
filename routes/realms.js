@@ -126,6 +126,57 @@ router.post('/:id/roles', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ASSIGN OR CLEAR MEMBER ROLE
+router.post('/:id/members/:userId/role', auth, async (req, res) => {
+  try {
+    const realm = await Realm.findById(req.params.id);
+    if (!realm) return res.status(404).json({ message: "Node lost" });
+    if (realm.owner.toString() !== req.user.id) return res.status(403).json({ message: "Sovereign only" });
+
+    const targetUserId = req.params.userId;
+    const { roleId } = req.body;
+
+    if (!realm.members.some(m => m.toString() === targetUserId)) {
+      return res.status(400).json({ message: "Target user is not part of this realm." });
+    }
+
+    // Remove existing mapping first
+    realm.memberRoles = (realm.memberRoles || []).filter(mr => mr.user.toString() !== targetUserId);
+
+    // Empty roleId means clear role assignment
+    if (roleId) {
+      const roleExists = realm.roles.some(r => r._id.toString() === roleId);
+      if (!roleExists) return res.status(404).json({ message: "Role not found." });
+      realm.memberRoles.push({ user: targetUserId, roleId });
+    }
+
+    await realm.save();
+    res.json({ memberRoles: realm.memberRoles });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE ROLE
+router.delete('/:id/roles/:roleId', auth, async (req, res) => {
+  try {
+    const realm = await Realm.findById(req.params.id);
+    if (!realm) return res.status(404).json({ message: "Node lost" });
+    if (realm.owner.toString() !== req.user.id) return res.status(403).json({ message: "Sovereign only" });
+
+    const roleId = req.params.roleId;
+    const prevCount = realm.roles.length;
+    realm.roles = realm.roles.filter(r => r._id.toString() !== roleId);
+    if (realm.roles.length === prevCount) {
+      return res.status(404).json({ message: "Role not found." });
+    }
+
+    // Cleanup member role mappings pointing to deleted role
+    realm.memberRoles = (realm.memberRoles || []).filter(mr => mr.roleId !== roleId);
+
+    await realm.save();
+    res.json({ roles: realm.roles, memberRoles: realm.memberRoles });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.post('/:id/invites', auth, async (req, res) => {
   try {
     const realm = await Realm.findById(req.params.id);
@@ -155,6 +206,20 @@ router.post('/join/:code', auth, async (req, res) => {
     if (!realm.members.some(m => m.toString() === req.user.id)) {
       realm.members.push(req.user.id); await realm.save();
       await User.findByIdAndUpdate(req.user.id, { $push: { realms: realm._id } });
+    }
+    res.json(realm);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// JOIN REALM BY ID (Client compatibility)
+router.post('/:id/join', auth, async (req, res) => {
+  try {
+    const realm = await Realm.findById(req.params.id);
+    if (!realm) return res.status(404).json({ message: "Realm no longer exists." });
+    if (!realm.members.some(m => m.toString() === req.user.id)) {
+      realm.members.push(req.user.id);
+      await realm.save();
+      await User.findByIdAndUpdate(req.user.id, { $addToSet: { realms: realm._id } });
     }
     res.json(realm);
   } catch (err) { res.status(500).json({ error: err.message }); }

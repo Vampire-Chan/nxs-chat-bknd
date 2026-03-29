@@ -517,14 +517,33 @@ router.post('/me/security/keys', auth, async (req, res) => {
 // GET PROFILE BY ID
 router.get('/:id', auth, async (req, res) => {
   try {
+    const baseUser = await User.findById(req.params.id)
+      .select('username avatar displayName bio isPrivate friends isDisabled');
+    if (!baseUser) return res.status(404).json({ message: "Identity lost" });
+
+    const isMe = req.user.id === req.params.id;
+    const isFriend = baseUser.friends.some(f => f.toString() === req.user.id);
+
+    // Privacy Guard: return only redacted public identity for locked profiles
+    if (baseUser.isPrivate && !isMe && !isFriend) {
+      return res.json({
+        _id: baseUser._id,
+        id: baseUser._id,
+        username: baseUser.username,
+        avatar: baseUser.avatar,
+        displayName: baseUser.displayName,
+        isPrivate: true,
+        isLocked: true,
+        isDisabled: !!baseUser.isDisabled
+      });
+    }
+
     const user = await User.findById(req.params.id)
       .select('-totpSecret -email')
       .populate('followers following friends', 'username avatar status displayName bio')
       .populate('inboundRequests', 'username avatar status displayName bio');
       
     if (!user) return res.status(404).json({ message: "Identity lost" });
-    const isMe = req.user.id === req.params.id;
-    const isFriend = user.friends.some(f => (f._id || f).toString() === req.user.id);
     const userObj = user.toObject(); userObj.id = userObj._id;
     if (user.isPrivate && !isMe && !isFriend) userObj.isLocked = true;
     res.json(userObj);

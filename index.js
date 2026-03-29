@@ -40,18 +40,25 @@ app.use((req, res, next) => {
 });
 
 // Middleware
-const allowedOrigins = [
+const explicitOrigins = [
   process.env.CLIENT_URL,
   'https://nxs-chat-web.vercel.app',
   'http://localhost:3000',
   'http://localhost:5173'
 ].filter(Boolean);
 
+const envOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+
+const allowedOrigins = new Set([...explicitOrigins, ...envOrigins]);
+
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1 || origin.endsWith('.vercel.app') || origin.endsWith('.onrender.com')) {
+    if (allowedOrigins.has(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -135,6 +142,7 @@ io.use(async (socket, next) => {
 const onlineUsers = new Map(); 
 const voiceRooms = {}; // { roomID: [{ socketId, user }, ...] }
 const pendingCalls = {}; // { channelId: { callerId, recipients: [userId], type } } — GLOBAL so all sockets can access
+const activeDirectRooms = {}; // { direct:callerId: { callerId, participants: [userId], type, activatedAt } }
 const lastMessageTimestamp = new Map(); // Rate limiting map for sockets
 
 io.on('connection', (socket) => {
@@ -203,10 +211,9 @@ io.on('connection', (socket) => {
       const isDirect = roomID.startsWith('direct:');
 
       if (isDirect) {
-        // VIRTUAL DIRECT ROOM: Just check if user is part of the link
-        const callerId = roomID.split(':')[1];
-        // Only the caller and the receiver can join this virtual room
-        if (userId !== callerId && !onlineUsers.has(userId)) return; // Basic check
+        // VIRTUAL DIRECT ROOM: only allow participants tracked by call state
+        const roomState = activeDirectRooms[roomID];
+        if (!roomState || !roomState.participants.includes(userId)) return;
       } else {
         const channel = await Channel.findById(roomID);
         if (!channel) return;
@@ -356,20 +363,31 @@ io.on('connection', (socket) => {
   });
 
   socket.on('initiate_call', async (data) => {
-    const { channelId, type, senderId, senderName, senderAvatar } = data;
+    const { channelId, type } = data;
+    const senderId = socket.user._id.toString();
     console.log(`📞 Call Init: ${type} from ${senderId} in ${channelId}`);
     
     try {
       const channel = await Channel.findById(channelId);
       if (!channel) return;
 
+      // SECURITY: Ensure caller is actually a member of the DM/group channel
+      if (!channel.members.some(m => m.toString() === senderId)) {
+        return socket.emit('call_status_update', { status: 'denied', reason: 'Unauthorized channel access' });
+      }
+
       const recipients = channel.members.filter(m => m.toString() !== senderId);
-      pendingCalls[channelId] = { callerId: senderId, recipients: recipients.map(r => r.toString()) };
+      pendingCalls[channelId] = { callerId: senderId, recipients: recipients.map(r => r.toString()), type };
 
       const payload = {
         channelId,
         type,
-        sender: { id: senderId, username: senderName, avatar: senderAvatar },
+        sender: {
+          id: senderId,
+          username: socket.user.username,
+          avatar: socket.user.avatar,
+          gender: socket.user.gender
+        },
         timestamp: Date.now()
       };
       
@@ -388,12 +406,24 @@ io.on('connection', (socket) => {
   socket.on('accept_call', ({ channelId }) => {
     const call = pendingCalls[channelId];
     if (call) {
+      const acceptedBy = socket.user._id.toString();
+
+      // Activate direct-room participant map before notifying peers
+      if (channelId.startsWith('direct:')) {
+        activeDirectRooms[channelId] = {
+          callerId: call.callerId,
+          participants: [call.callerId, acceptedBy],
+          type: call.type,
+          activatedAt: Date.now()
+        };
+      }
+
       // Notify the original caller that the recipient has accepted and is ready to establish P2P
       io.to(call.callerId).emit('caller_ready', { channelId, acceptedBy: socket.user._id, type: call.type });
       
       // Dismiss incoming_call on all other recipients
       call.recipients.forEach(rid => {
-        if (rid !== socket.user._id.toString()) {
+        if (rid !== acceptedBy) {
           io.to(rid).emit('call_dismissed', { channelId });
         }
       });
@@ -411,10 +441,25 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('react_message', async ({ messageId, emoji, userId, channelId }) => {
+  socket.on('react_message', async ({ messageId, emoji, channelId }) => {
     try {
       const msg = await Message.findById(messageId);
       if (!msg) return;
+
+      // SECURITY: Reaction actor is always the authenticated socket user
+      const userId = socket.user._id.toString();
+
+      const reactionChannelId = (msg.channel || '').toString();
+      const targetChannel = await Channel.findById(reactionChannelId);
+      if (!targetChannel) return;
+
+      // Ensure the reactor is allowed to access this channel
+      if (targetChannel.type === 'dm' || targetChannel.type === 'group_dm') {
+        if (!targetChannel.members.some(m => m.toString() === userId)) return;
+      } else {
+        const realm = await Realm.findById(targetChannel.realm);
+        if (!realm || !realm.members.some(m => m.toString() === userId)) return;
+      }
       
       if (!msg.reactions) msg.reactions = {};
       
@@ -428,7 +473,7 @@ io.on('connection', (socket) => {
       msg.markModified('reactions'); // Tell Mongoose the object changed
       await msg.save();
       
-      io.to(channelId).emit('message_reaction_update', { messageId, reactions: msg.reactions });
+      io.to(reactionChannelId || channelId).emit('message_reaction_update', { messageId, reactions: msg.reactions });
     } catch (err) { console.error(err); }
   });
 
@@ -452,6 +497,13 @@ io.on('connection', (socket) => {
         onlineUsers.delete(userId);
         // Broadcast "User Offline"
         io.emit('user_status_change', { userId, status: 'offline' });
+      }
+    }
+
+    // Cleanup stale direct call rooms when a participant disconnects
+    for (const roomID in activeDirectRooms) {
+      if (activeDirectRooms[roomID].participants.includes(userId)) {
+        delete activeDirectRooms[roomID];
       }
     }
   });

@@ -3,17 +3,20 @@ const crypto = require('crypto');
 const ALGORITHM = 'aes-256-cbc';
 const IV_LENGTH = 16;
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+const allowInsecureDevKey = process.env.ALLOW_INSECURE_DEV_KEY === '1';
 
-if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length !== 64) {
-  console.error('❌ [FATAL] ENCRYPTION_KEY is missing or invalid. Application cannot start securely.');
-  // In production, we should exit. In development/build, we might need a fallback, 
-  // but for safety, we'll enforce it.
-  if (process.env.NODE_ENV === 'production') {
+if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length !== 64 || !/^[0-9a-fA-F]{64}$/.test(ENCRYPTION_KEY)) {
+  if (allowInsecureDevKey) {
+    console.warn('⚠️ [INSECURE] Using ephemeral ENCRYPTION_KEY fallback because ALLOW_INSECURE_DEV_KEY=1. Do not use with persisted data.');
+  } else {
+    console.error('❌ [FATAL] ENCRYPTION_KEY is missing or invalid (must be 64 hex chars). Refusing to start to protect decryptability.');
     process.exit(1);
   }
 }
 
-const key = ENCRYPTION_KEY ? Buffer.from(ENCRYPTION_KEY, 'hex') : crypto.randomBytes(32);
+const key = ENCRYPTION_KEY && /^[0-9a-fA-F]{64}$/.test(ENCRYPTION_KEY)
+  ? Buffer.from(ENCRYPTION_KEY, 'hex')
+  : crypto.randomBytes(32);
 
 function encrypt(text) {
   if (text === null || typeof text === 'undefined') return null;

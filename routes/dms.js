@@ -72,6 +72,21 @@ router.post('/group', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// 3b. ACCEPT DM (Compatibility endpoint)
+router.put('/:id/accept', auth, async (req, res) => {
+  const userId = req.user.id || req.user._id;
+  try {
+    const dm = await Channel.findById(req.params.id);
+    if (!dm) return res.status(404).json({ message: "Link lost." });
+    if (!dm.members.some(m => m.toString() === userId.toString())) {
+      return res.status(403).json({ message: "Unauthorized." });
+    }
+
+    const populated = await Channel.findById(dm._id).populate('members', 'username avatar status');
+    res.json(populated);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // 4. UPDATE METADATA (Name, Icon, Nicknames)
 router.patch('/:id/metadata', auth, upload.single('icon'), async (req, res) => {
   const userId = req.user.id || req.user._id;
