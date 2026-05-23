@@ -550,4 +550,22 @@ router.get('/:id', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// 4. E2EE PUBLIC KEY CONFIGURATION
+router.put('/me/publicKey', auth, async (req, res) => {
+  try {
+    const { publicKey } = req.body;
+    if (!publicKey) return res.status(400).json({ message: "Public key required" });
+    await User.findByIdAndUpdate(req.user.id, { publicKey });
+    res.json({ message: "Identity encryption signature broadcasted." });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.get('/:id/publicKey', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select('publicKey');
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json({ publicKey: user.publicKey || null });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;

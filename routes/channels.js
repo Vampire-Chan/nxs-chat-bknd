@@ -44,7 +44,7 @@ const authorizeChannelAccess = async (req, res, next) => {
 // 1. EDIT MESSAGE
 router.put('/messages/:id', auth, async (req, res) => {
   try {
-    const { content } = req.body;
+    const { content, isEncrypted, iv } = req.body;
     const msg = await Message.findById(req.params.id);
     if (!msg) return res.status(404).json({ message: "Transmission lost." });
     
@@ -53,6 +53,8 @@ router.put('/messages/:id', auth, async (req, res) => {
     }
 
     msg.content = content;
+    if (isEncrypted !== undefined) msg.isEncrypted = isEncrypted;
+    if (iv !== undefined) msg.iv = iv;
     msg.editedAt = new Date();
     await msg.save();
 

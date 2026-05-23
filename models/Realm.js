@@ -9,8 +9,10 @@ const RealmSchema = new mongoose.Schema({
   // SOVEREIGN ROLE MATRIX
   roles: [{
     name: { type: String, required: true },
+    key: { type: String, default: null },
+    isSystem: { type: Boolean, default: false },
     color: { type: String, default: "#00d2ff" },
-    permissions: [{ type: String, enum: ['ADMIN', 'MANAGE_CHANNELS', 'KICK_MEMBERS', 'BAN_MEMBERS', 'POST_ANNOUNCEMENTS'] }],
+    permissions: [{ type: String, enum: ['ADMINISTRATOR', 'MANAGE_REALM', 'MANAGE_ROLES', 'MANAGE_CATEGORIES', 'MANAGE_CHANNELS', 'MANAGE_MESSAGES', 'MANAGE_MEDIA', 'VIEW_CHANNEL', 'SEND_MESSAGES', 'CREATE_POSTS', 'CONNECT', 'SPEAK', 'STREAM'] }],
     position: { type: Number, default: 0 }
   }],
 

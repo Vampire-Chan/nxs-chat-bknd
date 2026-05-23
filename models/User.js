@@ -9,6 +9,7 @@ const UserSchema = new mongoose.Schema({
   totpSecret: { type: String, required: true },
   isVerified: { type: Boolean, default: false },
   isSetupComplete: { type: Boolean, default: false },
+  publicKey: { type: String, default: "" },
   
   email: { type: String, default: "" }, 
   avatar: { type: String, default: "" },

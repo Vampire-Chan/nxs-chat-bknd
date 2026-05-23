@@ -23,7 +23,7 @@ router.get('/', auth, async (req, res) => {
     const dms = await Channel.find({
       type: { $in: ['dm', 'group_dm'] },
       members: req.user.id
-    }).populate('members', 'username avatar status');
+    }).populate('members', 'username avatar status publicKey');
     res.json(dms);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -38,7 +38,7 @@ router.post('/', auth, async (req, res) => {
       members: { $all: [req.user.id, targetUserId], $size: 2 }
     });
     if (dm) {
-      const populated = await Channel.findById(dm._id).populate('members', 'username avatar status');
+      const populated = await Channel.findById(dm._id).populate('members', 'username avatar status publicKey');
       return res.json(populated);
     }
 
@@ -48,7 +48,7 @@ router.post('/', auth, async (req, res) => {
       members: [req.user.id, targetUserId]
     });
     await dm.save();
-    const populated = await Channel.findById(dm._id).populate('members', 'username avatar status');
+    const populated = await Channel.findById(dm._id).populate('members', 'username avatar status publicKey');
     res.json(populated);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -67,7 +67,7 @@ router.post('/group', auth, async (req, res) => {
     });
 
     await group.save();
-    const populated = await Channel.findById(group._id).populate('members', 'username avatar status');
+    const populated = await Channel.findById(group._id).populate('members', 'username avatar status publicKey');
     res.json(populated);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -82,7 +82,7 @@ router.put('/:id/accept', auth, async (req, res) => {
       return res.status(403).json({ message: "Unauthorized." });
     }
 
-    const populated = await Channel.findById(dm._id).populate('members', 'username avatar status');
+    const populated = await Channel.findById(dm._id).populate('members', 'username avatar status publicKey');
     res.json(populated);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -110,7 +110,7 @@ router.patch('/:id/metadata', auth, upload.single('icon'), async (req, res) => {
     }
 
     await channel.save();
-    const updated = await Channel.findById(channel._id).populate('members', 'username avatar status');
+    const updated = await Channel.findById(channel._id).populate('members', 'username avatar status publicKey');
 
     console.log(`✅ [DM_ROUTER] Metadata updated for group: ${channel._id}`);
 

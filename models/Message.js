@@ -6,6 +6,8 @@ const MessageSchema = new mongoose.Schema({
   content: { type: String },
   mediaUrl: { type: String },
   mediaType: { type: String, enum: ['image', 'video', 'file', 'audio'] },
+  isEncrypted: { type: Boolean, default: false },
+  iv: { type: String },
   
   // REPLY PROTOCOL
   parentMessage: { type: mongoose.Schema.Types.ObjectId, ref: 'Message', default: null },

@@ -10,4 +10,8 @@ const InviteSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
+InviteSchema.index({ code: 1 }, { unique: true });
+InviteSchema.index({ realm: 1, createdAt: -1 });
+InviteSchema.index({ expiresAt: 1 });
+
 module.exports = mongoose.model('Invite', InviteSchema);

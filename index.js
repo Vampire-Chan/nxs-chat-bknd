@@ -154,6 +154,9 @@ io.on('connection', (socket) => {
     if (!onlineUsers.has(userId)) onlineUsers.set(userId, new Set());
     onlineUsers.get(userId).add(socket.id);
     io.emit('user_status_change', { userId, status: 'online' });
+    
+    // Emit initial list of online users to the newly connected socket
+    socket.emit('online_users', Array.from(onlineUsers.keys()));
 
     // Update inactivity anchor
     User.findByIdAndUpdate(userId, { lastSeenAt: new Date() }).catch(() => {});
@@ -180,6 +183,7 @@ io.on('connection', (socket) => {
       if (onlineUsers.has(to)) {
         // Store in pendingCalls so accept_call can find it
         pendingCalls[directChannelId] = { callerId: fromId, recipients: [to], type };
+        setTimeout(() => { if (pendingCalls[directChannelId]) delete pendingCalls[directChannelId]; }, 60000);
 
         io.to(to).emit('incoming_call', {
           channelId: directChannelId,
@@ -211,9 +215,12 @@ io.on('connection', (socket) => {
       const isDirect = roomID.startsWith('direct:');
 
       if (isDirect) {
-        // VIRTUAL DIRECT ROOM: only allow participants tracked by call state
+        // VIRTUAL DIRECT ROOM: allow if call is active or pending
         const roomState = activeDirectRooms[roomID];
-        if (!roomState || !roomState.participants.includes(userId)) return;
+        const pendingCall = pendingCalls[roomID];
+        const isAuthorized = (roomState && roomState.participants.includes(userId)) ||
+                             (pendingCall && (pendingCall.callerId === userId || pendingCall.recipients.includes(userId)));
+        if (!isAuthorized) return;
       } else {
         const channel = await Channel.findById(roomID);
         if (!channel) return;
@@ -318,7 +325,9 @@ io.on('connection', (socket) => {
         channel: data.channelId,
         sender: userId, // SECURE: Use authenticated ID
         content: data.content,
-        parentMessage: data.parentMessageId || null
+        parentMessage: data.parentMessageId || null,
+        isEncrypted: data.isEncrypted || false,
+        iv: data.iv || null
       });
       await newMessage.save();
 
@@ -378,6 +387,7 @@ io.on('connection', (socket) => {
 
       const recipients = channel.members.filter(m => m.toString() !== senderId);
       pendingCalls[channelId] = { callerId: senderId, recipients: recipients.map(r => r.toString()), type };
+      setTimeout(() => { if (pendingCalls[channelId]) delete pendingCalls[channelId]; }, 60000);
 
       const payload = {
         channelId,
@@ -408,36 +418,60 @@ io.on('connection', (socket) => {
     if (call) {
       const acceptedBy = socket.user._id.toString();
 
-      // Activate direct-room participant map before notifying peers
       if (channelId.startsWith('direct:')) {
+        // Activate direct-room participant map before notifying peers
         activeDirectRooms[channelId] = {
           callerId: call.callerId,
           participants: [call.callerId, acceptedBy],
           type: call.type,
           activatedAt: Date.now()
         };
-      }
 
-      // Notify the original caller that the recipient has accepted and is ready to establish P2P
-      io.to(call.callerId).emit('caller_ready', { channelId, acceptedBy: socket.user._id, type: call.type });
-      
-      // Dismiss incoming_call on all other recipients
-      call.recipients.forEach(rid => {
-        if (rid !== acceptedBy) {
-          io.to(rid).emit('call_dismissed', { channelId });
+        // Notify the original caller that the recipient has accepted and is ready to establish P2P
+        io.to(call.callerId).emit('caller_ready', { channelId, acceptedBy: socket.user._id, type: call.type });
+        
+        // Dismiss incoming_call on all other recipients
+        call.recipients.forEach(rid => {
+          if (rid !== acceptedBy) {
+            io.to(rid).emit('call_dismissed', { channelId });
+          }
+        });
+
+        delete pendingCalls[channelId];
+      } else {
+        // Group DM Call: Notify the caller that this user accepted
+        io.to(call.callerId).emit('caller_ready', { channelId, acceptedBy: socket.user._id, type: call.type });
+        
+        // Remove this user from the pending recipients list
+        call.recipients = call.recipients.filter(rid => rid !== acceptedBy);
+        
+        // If all recipients responded, clean up the pending call tracking
+        if (call.recipients.length === 0) {
+          delete pendingCalls[channelId];
         }
-      });
-
-      delete pendingCalls[channelId];
+      }
     }
   });
 
   socket.on('reject_call', ({ channelId }) => {
     const call = pendingCalls[channelId];
     if (call) {
-      // Notify the caller that the call was rejected
-      io.to(call.callerId).emit('call_rejected', { channelId });
-      delete pendingCalls[channelId];
+      const rejectedBy = socket.user._id.toString();
+
+      if (channelId.startsWith('direct:')) {
+        // Notify the caller that the call was rejected
+        io.to(call.callerId).emit('call_rejected', { channelId });
+        delete pendingCalls[channelId];
+      } else {
+        // Group DM Call: Remove this user from the pending recipients list
+        call.recipients = call.recipients.filter(rid => rid !== rejectedBy);
+        
+        // If all recipients rejected, notify caller and clean up
+        if (call.recipients.length === 0) {
+          io.to(call.callerId).emit('call_rejected', { channelId });
+          delete pendingCalls[channelId];
+        }
+      }
     }
   });
 
